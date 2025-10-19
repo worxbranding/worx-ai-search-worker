@@ -7,10 +7,31 @@
     {
       "binding": "VECTORIZE",
       "index_name": "worx-ai-index",
-      "remote": true
+      "remote": true // suppresses the "use remote bindings" warning in dev
     }
   ],
+
   "ai": {
-    "binding": "AI",
+    "binding": "AI"
+  },
+
+  "vars": {
+    // Comma-separated list. Use "*" only for quick local tests.
+    "ALLOWED_ORIGINS": "http://localhost:5173,http://localhost:3000"
+  },
+
+  "dev": {
+    "ip": "127.0.0.1",
+    "port": 8787
+  },
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true
+    }
   }
 }

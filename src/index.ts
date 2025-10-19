@@ -1,24 +1,41 @@
+// src/index.ts (worx-search) — full file
+
 export interface Env {
     VECTORIZE: VectorizeIndex;
     AI: Ai;
+    ALLOWED_ORIGINS?: string; // comma-separated list; e.g. "http://localhost:5173,https://example.com"
 }
 
 const EMBED_MODEL = "@cf/baai/bge-base-en-v1.5"; // 768 dims
 const CHAT_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 const DIMS = 768;
 
-// ---------- small utils ----------
-const json = (o: unknown, init: ResponseInit = {}) =>
-    new Response(JSON.stringify(o, null, 2), {
-        headers: { "content-type": "application/json; charset=utf-8" },
-        ...init,
-    });
+/* ------------------------- CORS helpers ------------------------- */
+
+const DEFAULT_ALLOWED = ["http://localhost:5173", "http://localhost:3000"];
+
+function corsHeaders(origin: string | null, allowed: string[]): Headers {
+    const h = new Headers({ "content-type": "application/json; charset=utf-8" });
+    const okOrigin = origin && (allowed.includes("*") || allowed.includes(origin));
+    h.set("access-control-allow-origin", okOrigin ? origin : "null");
+    h.set("access-control-allow-credentials", "true");
+    h.set("access-control-allow-headers", "content-type, authorization");
+    h.set("access-control-allow-methods", "GET, POST, OPTIONS");
+    return h;
+}
+
+function withCors(origin: string | null, allowed: string[], body: unknown, init: ResponseInit = {}) {
+    const headers = corsHeaders(origin, allowed);
+    if (init.headers) {
+        for (const [k, v] of Object.entries(init.headers as Record<string, string>)) headers.set(k, v as string);
+    }
+    return new Response(JSON.stringify(body, null, 2), { ...init, headers });
+}
+
+/* ------------------------- small utils ------------------------- */
 
 function isNumArray(a: any): a is number[] {
     return Array.isArray(a) && a.every((x) => typeof x === "number" && Number.isFinite(x));
-}
-function toF32(v: number[]) {
-    return new Float32Array(v);
 }
 function ensureDims(v: number[]) {
     if (!Array.isArray(v) || v.length !== DIMS) {
@@ -32,33 +49,28 @@ function fmtCitation(m: Record<string, any>): string {
     return `${title} — ${url}${ts}`;
 }
 
-// ---------- robust embed ----------
+/* ------------------------- robust embed ------------------------- */
 /**
- * Cloudflare AI can return several shapes. Accept all:
+ * Cloudflare AI may return:
  * 1) number[768]
  * 2) { data: number[768], shape?: [1,768], ... }
- * 3) { data: [[number[768]]], ... }  // nested - THIS IS WHAT CF RETURNS
+ * 3) { data: [[number[768]]] }   // common
  * 4) { data: [{ embedding: number[768] }], ... }
- * 5) { embeddings: number[768] } (rare)
+ * 5) { embeddings: number[768] } or [[...]]
  */
 function pluckEmbedding(raw: any): number[] | null {
-    // 1) raw as array
     if (Array.isArray(raw) && isNumArray(raw) && raw.length === DIMS) return raw;
 
-    // 2) object with data
     if (raw && typeof raw === "object") {
         const d = (raw as any).data;
 
-        // 2a) data is flat array
         if (Array.isArray(d) && isNumArray(d) && d.length === DIMS) return d;
 
-        // 2b) data is nested array [[...]] - MOST COMMON FROM CLOUDFLARE
         if (Array.isArray(d) && d.length > 0 && Array.isArray(d[0])) {
             const inner = d[0];
             if (isNumArray(inner) && inner.length === DIMS) return inner;
         }
 
-        // 2c) data is [{ embedding: [...] }]
         if (
             Array.isArray(d) &&
             d.length > 0 &&
@@ -71,7 +83,6 @@ function pluckEmbedding(raw: any): number[] | null {
             return d[0].embedding as number[];
         }
 
-        // 3) embeddings key
         const e = (raw as any).embeddings;
         if (Array.isArray(e) && isNumArray(e) && e.length === DIMS) return e;
         if (Array.isArray(e) && e.length > 0 && Array.isArray(e[0]) && isNumArray(e[0]) && e[0].length === DIMS) return e[0];
@@ -83,14 +94,8 @@ function pluckEmbedding(raw: any): number[] | null {
 async function embed(env: Env, text: string): Promise<number[]> {
     const raw = await env.AI.run(EMBED_MODEL as any, { text });
 
-    console.log("Raw AI response:", JSON.stringify(raw).substring(0, 200)); // debug
-
     const arr = pluckEmbedding(raw);
-
-    console.log("Plucked array:", arr ? `length=${arr.length}` : "null"); // debug
-
     if (!arr) {
-        // include a tiny hint without dumping huge objects
         const hint =
             raw && typeof raw === "object"
                 ? { keys: Object.keys(raw).slice(0, 6), sample: Array.isArray((raw as any).data) ? typeof (raw as any).data[0] : typeof raw }
@@ -98,12 +103,14 @@ async function embed(env: Env, text: string): Promise<number[]> {
         throw new Error(`Embedding unexpected shape: ${JSON.stringify(hint)}`);
     }
     ensureDims(arr);
-    return arr;  // Return the regular array, NOT toF32(arr)
+    return arr; // keep as regular array for Vectorize.query
 }
 
-// ---------- endpoints ----------
-async function handleStatus() {
-    return json({
+/* ------------------------- route handlers ------------------------- */
+
+async function handleStatus(req: Request, allowed: string[]) {
+    const origin = req.headers.get("origin");
+    return withCors(origin, allowed, {
         ok: true,
         embed_model: EMBED_MODEL,
         chat_model: CHAT_MODEL,
@@ -120,32 +127,35 @@ async function handleStatus() {
     });
 }
 
-async function handleDebugEmbed(req: Request, env: Env) {
+async function handleDebugEmbed(req: Request, env: Env, allowed: string[]) {
+    const origin = req.headers.get("origin");
     const q = new URL(req.url).searchParams.get("q") || "";
     try {
         const v = await embed(env, q);
-        return json({ ok: true, q, result: { valid: v.length === DIMS, gotLen: v.length, expected: DIMS } });
+        return withCors(origin, allowed, { ok: true, q, result: { valid: v.length === DIMS, gotLen: v.length, expected: DIMS } });
     } catch (e: any) {
-        return json({ ok: false, q, error: String(e?.message || e) }, { status: 500 });
+        return withCors(origin, allowed, { ok: false, q, error: String(e?.message || e) }, { status: 500 });
     }
 }
 
-async function handleDebugEmbedRaw(req: Request, env: Env) {
+async function handleDebugEmbedRaw(req: Request, env: Env, allowed: string[]) {
+    const origin = req.headers.get("origin");
     const q = new URL(req.url).searchParams.get("q") || "";
     try {
         const raw = await env.AI.run(EMBED_MODEL as any, { text: q });
-        return json({ ok: true, q, raw });
+        return withCors(origin, allowed, { ok: true, q, raw });
     } catch (e: any) {
-        return json({ ok: false, q, error: String(e?.message || e) }, { status: 500 });
+        return withCors(origin, allowed, { ok: false, q, error: String(e?.message || e) }, { status: 500 });
     }
 }
 
-/** Query by a stored vector id (uses vectorId; there is no .get()) */
-async function handleDebugQueryById(req: Request, env: Env) {
+/** Query by stored vector id (uses vectorId) */
+async function handleDebugQueryById(req: Request, env: Env, allowed: string[]) {
+    const origin = req.headers.get("origin");
     const u = new URL(req.url);
     const id = u.searchParams.get("id") || "";
     const k = Number(u.searchParams.get("k") || 6);
-    if (!id) return json({ ok: false, error: "Missing id" }, { status: 400 });
+    if (!id) return withCors(origin, allowed, { ok: false, error: "Missing id" }, { status: 400 });
 
     try {
         const out = await (env.VECTORIZE as any).query({
@@ -154,17 +164,18 @@ async function handleDebugQueryById(req: Request, env: Env) {
             includeMetadata: true
         });
         const matches = (out as any).matches ?? out;
-        return json({ ok: true, mode: "vectorId", id, k, results: matches });
+        return withCors(origin, allowed, { ok: true, mode: "vectorId", id, k, results: matches });
     } catch (e: any) {
-        return json({ ok: false, error: String(e?.message || e) }, { status: 500 });
+        return withCors(origin, allowed, { ok: false, error: String(e?.message || e) }, { status: 500 });
     }
 }
 
-async function handleSearch(req: Request, env: Env) {
+async function handleSearch(req: Request, env: Env, allowed: string[]) {
+    const origin = req.headers.get("origin");
     const u = new URL(req.url);
     const q = u.searchParams.get("q") || "";
     const k = Number(u.searchParams.get("k") || 8);
-    if (!q) return json({ ok: false, error: "Missing q" }, { status: 400 });
+    if (!q) return withCors(origin, allowed, { ok: false, error: "Missing q" }, { status: 400 });
 
     try {
         const vec = await embed(env, q);
@@ -175,7 +186,7 @@ async function handleSearch(req: Request, env: Env) {
         });
 
         const matches = out.matches ?? [];
-        return json({
+        return withCors(origin, allowed, {
             ok: true,
             q,
             k,
@@ -186,15 +197,16 @@ async function handleSearch(req: Request, env: Env) {
             }))
         });
     } catch (e: any) {
-        return json({ ok: false, error: String(e?.message || e) }, { status: 500 });
+        return withCors(origin, allowed, { ok: false, error: String(e?.message || e) }, { status: 500 });
     }
 }
 
-async function handleSearchRaw(req: Request, env: Env) {
+async function handleSearchRaw(req: Request, env: Env, allowed: string[]) {
+    const origin = req.headers.get("origin");
     const u = new URL(req.url);
     const q = u.searchParams.get("q") || "";
     const k = Number(u.searchParams.get("k") || 8);
-    if (!q) return json({ ok: false, error: "Missing q" }, { status: 400 });
+    if (!q) return withCors(origin, allowed, { ok: false, error: "Missing q" }, { status: 400 });
 
     try {
         const vec = await embed(env, q);
@@ -204,23 +216,22 @@ async function handleSearchRaw(req: Request, env: Env) {
             returnMetadata: true
         });
 
-        return json({ ok: true, route: "search/raw", body: out });
+        return withCors(origin, allowed, { ok: true, route: "search/raw", body: out });
     } catch (e: any) {
-        return json({ ok: false, route: "search/raw", body: { error: String(e?.message || e) } }, { status: 500 });
+        return withCors(origin, allowed, { ok: false, route: "search/raw", body: { error: String(e?.message || e) } }, { status: 500 });
     }
 }
 
-
-async function handleAsk(req: Request, env: Env) {
+async function handleAsk(req: Request, env: Env, allowed: string[]) {
+    const origin = req.headers.get("origin");
     const body = (await req.json().catch(() => ({}))) as { q?: string; k?: number };
     const q = (body.q || "").trim();
     const k = Number(body.k || 6);
-    if (!q) return json({ ok: false, error: "Missing q" }, { status: 400 });
+    if (!q) return withCors(origin, allowed, { ok: false, error: "Missing q" }, { status: 400 });
 
     try {
         const vec = await embed(env, q);
 
-        // Correct Vectorize v2 API: query(vector, options)
         const out = await env.VECTORIZE.query(vec, {
             topK: isFinite(k) && k > 0 ? k : 6,
             returnMetadata: true
@@ -250,7 +261,7 @@ async function handleAsk(req: Request, env: Env) {
             (chat as any).response ??
             (Array.isArray((chat as any).output) ? (chat as any).output.map((t: any) => t?.content ?? "").join("\n") : String(chat));
 
-        return json({
+        return withCors(origin, allowed, {
             ok: true,
             q,
             k,
@@ -258,27 +269,35 @@ async function handleAsk(req: Request, env: Env) {
             citations: matches.map((m: any) => `[${m.id}] ${fmtCitation(m.metadata || {})}`)
         });
     } catch (e: any) {
-        return json({ ok: false, error: String(e?.message || e), where: "vectorize.query" }, { status: 500 });
+        return withCors(origin, allowed, { ok: false, error: String(e?.message || e), where: "vectorize.query" }, { status: 500 });
     }
 }
 
-// ---------- router ----------
+/* ------------------------- router ------------------------- */
+
 export default {
     async fetch(req: Request, env: Env): Promise<Response> {
+        const allowed = (env.ALLOWED_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean) ??
+            DEFAULT_ALLOWED);
+
+        // Preflight
+        if (req.method === "OPTIONS") {
+            return new Response(null, { headers: corsHeaders(req.headers.get("origin"), allowed) });
+        }
+
         const { pathname } = new URL(req.url);
 
-        if (req.method === "GET" && pathname === "/status") return handleStatus();
+        if (req.method === "GET" && pathname === "/status") return handleStatus(req, allowed);
 
-        if (req.method === "GET" && pathname === "/debug/embed") return handleDebugEmbed(req, env);
-        if (req.method === "GET" && pathname === "/debug/embed/raw") return handleDebugEmbedRaw(req, env);
-        if (req.method === "GET" && pathname === "/debug/query-by-id") return handleDebugQueryById(req, env);
+        if (req.method === "GET" && pathname === "/debug/embed") return handleDebugEmbed(req, env, allowed);
+        if (req.method === "GET" && pathname === "/debug/embed/raw") return handleDebugEmbedRaw(req, env, allowed);
+        if (req.method === "GET" && pathname === "/debug/query-by-id") return handleDebugQueryById(req, env, allowed);
 
-        if (req.method === "GET" && pathname === "/search") return handleSearch(req, env);
-        if (req.method === "GET" && pathname === "/search/raw") return handleSearchRaw(req, env);
+        if (req.method === "GET" && pathname === "/search") return handleSearch(req, env, allowed);
+        if (req.method === "GET" && pathname === "/search/raw") return handleSearchRaw(req, env, allowed);
 
-        if (req.method === "POST" && pathname === "/ask") return handleAsk(req, env);
+        if (req.method === "POST" && pathname === "/ask") return handleAsk(req, env, allowed);
 
-        if (req.method === "GET" && pathname === "/") return json({ ok: true, see: "/status" });
-        return new Response("Not found", { status: 404 });
-    },
+        return withCors(req.headers.get("origin"), allowed, { ok: true, see: "/status" });
+    }
 };
