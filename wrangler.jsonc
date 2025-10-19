@@ -1,0 +1,16 @@
+{
+  "name": "worx-search",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-10-01",
+
+  "vectorize": [
+    {
+      "binding": "VECTORIZE",
+      "index_name": "worx-ai-index",
+      "remote": true
+    }
+  ],
+  "ai": {
+    "binding": "AI",
+  }
+}
