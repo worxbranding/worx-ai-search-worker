@@ -7,16 +7,22 @@
     {
       "binding": "VECTORIZE",
       "index_name": "worx-ai-index",
-      "remote": true // suppresses the "use remote bindings" warning in dev
+      "remote": true
     }
   ],
 
-  "ai": {
-    "binding": "AI"
-  },
+  "ai": { "binding": "AI" },
+
+  // 👇 Add CONFIG KV with both prod id and preview_id
+  "kv_namespaces": [
+    {
+      "binding": "CONFIG",
+      "id": "2d873b13f8fd45fb924955dd598281c5",
+      "preview_id": "343f19548f5d4550aa17513fd2e35f93"
+    }
+  ],
 
   "vars": {
-    // Comma-separated list. Use "*" only for quick local tests.
     "ALLOWED_ORIGINS": "http://localhost:5173,http://localhost:3000"
   },
 
@@ -28,10 +34,6 @@
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,
-    "logs": {
-      "enabled": true,
-      "head_sampling_rate": 1,
-      "invocation_logs": true
-    }
+    "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": true }
   }
 }
