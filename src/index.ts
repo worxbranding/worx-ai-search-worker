@@ -137,7 +137,7 @@ async function handleSearch(req: Request, env: Env, cfg: SiteConfig) {
 
     const vec = await embed(env, cfg.ai.embed_model, cfg.vectorize.dims, q);
     // @ts-ignore
-    const out = await env.VECTORIZE.query(vec, { topK: k, includeMetadata: true });
+    const out = await env.VECTORIZE.query(vec, { topK: k, returnMetadata: true });
 
     const pre = (out?.matches || []) as SearchMatch[];
     const post = filterToSite(site, pre);
@@ -157,7 +157,7 @@ async function handleAsk(req: Request, env: Env, cfg: SiteConfig) {
 
     const vec = await embed(env, cfg.ai.embed_model, cfg.vectorize.dims, q);
     // @ts-ignore
-    const out = await env.VECTORIZE.query(vec, { topK: k, includeMetadata: true });
+    const out = await env.VECTORIZE.query(vec, { topK: k, returnMetadata: true });
     const matches = filterToSite(site, out?.matches || []);
 
     const contexts = matches.map((m) => {
@@ -224,7 +224,7 @@ async function handleDebugQueryById(req: Request, env: Env, cfg: SiteConfig) {
 
     id = sitePrefixedId(site, id);
     // @ts-ignore
-    const out = await env.VECTORIZE.query({ vectorId: id, topK: k, includeMetadata: true });
+    const out = await env.VECTORIZE.query({ vectorId: id, topK: k, returnMetadata: true });
     const post = filterToSite(site, out?.matches || []);
     return json({ ok: true, id, k, results: post });
 }
