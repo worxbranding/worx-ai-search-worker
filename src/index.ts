@@ -70,7 +70,7 @@ function wantApiKey(cfg: SiteConfig): string {
 }
 async function requireApiKey(req: Request, cfg: SiteConfig): Promise<Response | null> {
     const want = wantApiKey(cfg);
-    if (!want) return json({ ok: false, error: "API key required or invalid" }, { status: 401 });
+    if (!want) return null; // No key required, allow through
     const got = (req.headers.get("x-api-key") || "").trim();
     if (got === want) return null;
     return json({ ok: false, error: "API key required or invalid" }, { status: 401 });
