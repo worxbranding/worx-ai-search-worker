@@ -155,23 +155,43 @@ async function handleAsk(req: Request, env: Env, cfg: SiteConfig) {
     if (!site) return json({ ok: false, error: "Missing field 'site'" }, { status: 400 });
     if (!q) return json({ ok: false, error: "Missing field 'q'" }, { status: 400 });
 
+    // Embed the question
     const vec = await embed(env, cfg.ai.embed_model, cfg.vectorize.dims, q);
+
+    // Vectorize v2 binding: includeMetadata=true
     // @ts-ignore
-    const out = await env.VECTORIZE.query(vec, { topK: k, returnMetadata: true });
+    const out = await env.VECTORIZE.query(vec, { topK: k, includeMetadata: true });
     const matches = filterToSite(site, out?.matches || []);
 
+    // Build Markdown context with inline links so the model learns to reference them
     const contexts = matches.map((m) => {
         const md = (m.metadata || {}) as any;
-        const head = md.title || md.path || md.url || m.id;
-        const prev = md.preview ? `\n${md.preview}` : "";
-        return `### ${head}${prev}`;
+        const title = md.title || md.path || md.url || m.id;
+        const url = md.url || "";
+        const preview = md.preview ? `\n${md.preview}` : "";
+        // Prefer linked title if we have a URL
+        return url ? `### [${title}](${url})${preview}` : `### ${title}${preview}`;
     });
 
-    const system = cfg.search?.system_prompt || "You are a helpful assistant. Keep answers concise and grounded in context.";
+    // Tight system prompt that forces inline links and no citations section
+    const system =
+        (cfg.search?.system_prompt ||
+            "You are a helpful assistant. Keep answers concise and grounded in context.") +
+        `
+Rules:
+- Use inline **Markdown links** to the most relevant page(s) when you mention them (e.g. [Digital Marketing](https://example)).
+- Do **not** add a separate citations list or a "Source:" line.
+- Answer directly from the provided context. If nothing relevant is found, say:
+  "I'm sorry, I couldn't find an answer based on the available information."`;
+
+    // Compose user message
+    const user =
+        contexts.length > 0
+            ? `Question: ${q}\n\nContext:\n${contexts.join("\n\n")}`
+            : `Question: ${q}\n\nContext:\n(no relevant context)`; // helps the model follow the "no info" rule
+
     const chatModel = cfg.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
     const temperature = Number(cfg.search?.chat_temperature ?? 0.1);
-
-    const user = `Question: ${q}\n\nContext:\n${contexts.join("\n\n")}`;
 
     const chat = await env.AI.run(chatModel as any, {
         messages: [
@@ -179,25 +199,24 @@ async function handleAsk(req: Request, env: Env, cfg: SiteConfig) {
             { role: "user", content: user },
         ],
         temperature,
-        max_output_tokens: 300,
+        max_output_tokens: 400,
     } as any);
 
-    const answer =
+    let answer =
         (chat as any).response ??
-        (Array.isArray((chat as any).output) ? (chat as any).output.map((t: any) => t?.content ?? "").join("\n") : String(chat));
+        (Array.isArray((chat as any).output)
+            ? (chat as any).output.map((t: any) => t?.content ?? "").join("\n")
+            : String(chat));
+
+    // Small cleanup: if a model still adds "Source:" lines, strip them.
+    answer = answer.replace(/\n?\s*source:\s*.*$/gim, "").trim();
 
     return json({
         ok: true,
         q,
         k,
-        answer,
-        citations: matches.map((m) => {
-            const md = (m.metadata || {}) as any;
-            const title = md.title || md.path || md.url || m.id;
-            const url = md.url || "";
-            const ts = md.updated_at ? ` (updated ${md.updated_at})` : "";
-            return `[${m.id}] ${title} — ${url}${ts}`;
-        }),
+        answer, // <-- contains inline Markdown links
+        // no citations field
     });
 }
 
