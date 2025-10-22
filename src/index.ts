@@ -1,26 +1,40 @@
-// WORX AI Search Worker — multi-tenant + API key + CORS + Vectorize v2
+// WORX AI Search Worker — multi-tenant + API key + CORS + Vectorize v2 (ENRICHED CONTEXT)
+
+// ---- Type declarations ----
+declare interface VectorizeIndex {
+    query(arg: number[] | { vectorId: string } | any, opts?: any): Promise<{ matches?: Array<any> }>;
+}
+
+declare interface Ai {
+    run(model: any, input: any): Promise<any>;
+}
+
+declare interface KVNamespace {
+    get<T = string>(key: string, type?: "text" | "json"): Promise<T | null>;
+    put?(key: string, value: string, opts?: any): Promise<void>;
+}
 
 export interface Env {
     VECTORIZE: VectorizeIndex;
     AI: Ai;
     CONFIG: KVNamespace;
-    ALLOWED_ORIGINS?: string; // optional global fallback
+    ALLOWED_ORIGINS?: string;
 }
 
-/* ---------------- Types ---------------- */
-
+// ---- Config types ----
 type SiteConfig = {
     site_key: string;
     vectorize: { index_name: string; dims: number; metric?: "cosine" | "euclidean" | "dot" };
     ai: { embed_model: string };
-    api_key?: string; // <-- top-level key support
+    api_key?: string;
     search?: {
         allowed_origins?: string[];
-        api_key?: string;  // <-- nested key support
+        api_key?: string;
         chat_model?: string;
         chat_temperature?: number;
         system_prompt?: string;
         topK?: number;
+        max_output_tokens?: number;
     };
 };
 
@@ -32,8 +46,7 @@ const json = (o: unknown, init: ResponseInit = {}) =>
         ...init,
     });
 
-/* ---------------- Small utils ---------------- */
-
+// ---- Small utils ----
 async function loadSiteConfig(env: Env, site: string): Promise<SiteConfig> {
     const key = `cfg:${site}`;
     const cfg = await env.CONFIG.get<SiteConfig>(key, "json");
@@ -64,13 +77,12 @@ function allowOrigin(origin: string | null, cfg: SiteConfig, env: Env): string |
     return allowed.includes(origin) ? origin : null;
 }
 
-/** Accept key at search.api_key OR top-level api_key */
 function wantApiKey(cfg: SiteConfig): string {
     return (cfg.search?.api_key || cfg.api_key || "").trim();
 }
 async function requireApiKey(req: Request, cfg: SiteConfig): Promise<Response | null> {
     const want = wantApiKey(cfg);
-    if (!want) return null; // No key required, allow through
+    if (!want) return null;
     const got = (req.headers.get("x-api-key") || "").trim();
     if (got === want) return null;
     return json({ ok: false, error: "API key required or invalid" }, { status: 401 });
@@ -80,10 +92,8 @@ function isNumArray(a: any): a is number[] {
     return Array.isArray(a) && a.every((x) => typeof x === "number" && Number.isFinite(x));
 }
 
-/** CF AI embedding shapes to handle */
 function pluckEmbedding(raw: any, dims: number): number[] | null {
     if (Array.isArray(raw) && isNumArray(raw) && raw.length === dims) return raw;
-
     if (raw && typeof raw === "object") {
         const d = (raw as any).data;
         if (Array.isArray(d) && isNumArray(d) && d.length === dims) return d;
@@ -106,13 +116,59 @@ async function embed(env: Env, model: string, dims: number, text: string): Promi
     return arr;
 }
 
-/* ---------------- Handlers ---------------- */
+function normalizeUrl(u: string): string {
+    try {
+        const url = new URL(u);
+        url.hash = "";
+        url.search = "";
+        url.hostname = url.hostname.toLowerCase();
+        return url.toString().replace(/\/+$/, "");
+    } catch {
+        return "";
+    }
+}
 
+// ---- Build enriched document context ----
+async function buildDocContext(env: Env, md: Record<string, any>): Promise<string> {
+    let parts: string[] = [];
+
+    const url = md.url ? normalizeUrl(md.url) : "";
+    const title = md.title || "Untitled";
+    const seoTitle = md.seo_title || "";
+    const seoDesc = md.seo_description || "";
+    const collection = md.collection || "";
+    const subcat = md.subcategory || "";
+    const parent = md.parent_title || "";
+    const breadcrumbs = (md.breadcrumbs || []).join(" > ");
+    const preview = md.preview || "";
+    const children = md.children_md || "";
+    const path = md.path || "";
+
+    parts.push(`**${title}** (${url})`);
+    if (seoTitle && seoTitle !== title) parts.push(`SEO Title: ${seoTitle}`);
+    if (seoDesc) parts.push(`SEO Description: ${seoDesc}`);
+    if (collection) parts.push(`Collection: ${collection}`);
+    if (subcat) parts.push(`Subcategory: ${subcat}`);
+    if (parent) parts.push(`Parent: ${parent}`);
+    if (breadcrumbs) parts.push(`Breadcrumbs: ${breadcrumbs}`);
+    if (path) parts.push(`Path: ${path}`);
+
+    const kvKey = md.doc_key;
+    if (kvKey) {
+        const txt = await env.CONFIG.get<string>(kvKey, "text");
+        if (txt && txt.trim()) parts.push(`Full Text:\n${txt.slice(0, 3000)}`);
+    }
+    if (preview) parts.push(`Preview:\n${preview}`);
+    if (children) parts.push(`Children:\n${children}`);
+
+    return parts.join("\n\n");
+}
+
+// ---- Handlers ----
 async function handleStatus(req: Request, env: Env) {
     const u = new URL(req.url);
     const site = (u.searchParams.get("site") || "").trim();
     if (!site) return json({ ok: false, error: "Missing ?site=" }, { status: 400 });
-
     const cfg = await loadSiteConfig(env, site);
     return json({
         ok: true,
@@ -129,16 +185,14 @@ async function handleSearch(req: Request, env: Env, cfg: SiteConfig) {
     const u = new URL(req.url);
     const site = (u.searchParams.get("site") || "").trim();
     const q = (u.searchParams.get("q") || "").trim();
-    const k = Math.max(1, Math.min(24, Number(u.searchParams.get("k") || cfg.search?.topK || 6)));
+    const k = cfg.search?.topK;
     const wantDebug = (u.searchParams.get("debug") || "") === "1";
-
     if (!site) return json({ ok: false, error: "Missing ?site=" }, { status: 400 });
     if (!q) return json({ ok: false, error: "Missing ?q=" }, { status: 400 });
 
     const vec = await embed(env, cfg.ai.embed_model, cfg.vectorize.dims, q);
     // @ts-ignore
     const out = await env.VECTORIZE.query(vec, { topK: k, returnMetadata: true });
-
     const pre = (out?.matches || []) as SearchMatch[];
     const post = filterToSite(site, pre);
 
@@ -147,6 +201,7 @@ async function handleSearch(req: Request, env: Env, cfg: SiteConfig) {
     return json(body);
 }
 
+// ---- Enhanced ASK ----
 async function handleAsk(req: Request, env: Env, cfg: SiteConfig) {
     const body = (await req.json().catch(() => ({}))) as { site?: string; q?: string; k?: number };
     const site = (body.site || "").trim();
@@ -155,43 +210,31 @@ async function handleAsk(req: Request, env: Env, cfg: SiteConfig) {
     if (!site) return json({ ok: false, error: "Missing field 'site'" }, { status: 400 });
     if (!q) return json({ ok: false, error: "Missing field 'q'" }, { status: 400 });
 
-    // Embed the question
     const vec = await embed(env, cfg.ai.embed_model, cfg.vectorize.dims, q);
-
-    // Vectorize v2 binding: includeMetadata=true
     // @ts-ignore
-    const out = await env.VECTORIZE.query(vec, { topK: k, includeMetadata: true });
+    const out = await env.VECTORIZE.query(vec, { topK: k, includeMetadata: true, returnMetadata: true });
     const matches = filterToSite(site, out?.matches || []);
 
-    // Build Markdown context with inline links so the model learns to reference them
-    const contexts = matches.map((m) => {
+    const contexts: string[] = [];
+    for (let i = 0; i < Math.min(matches.length, 6); i++) {
+        const m = matches[i];
         const md = (m.metadata || {}) as any;
-        const title = md.title || md.path || md.url || m.id;
-        const url = md.url || "";
-        const preview = md.preview ? `\n${md.preview}` : "";
-        // Prefer linked title if we have a URL
-        return url ? `### [${title}](${url})${preview}` : `### ${title}${preview}`;
-    });
+        const docContext = await buildDocContext(env, md);
+        contexts.push(`[#${i + 1}] ${docContext}`);
+    }
 
-    // Tight system prompt that forces inline links and no citations section
-    const system =
-        (cfg.search?.system_prompt ||
-            "You are a helpful assistant. Keep answers concise and grounded in context.") +
-        `
-Rules:
-- Use inline **Markdown links** to the most relevant page(s) when you mention them (e.g. [Digital Marketing](https://example)).
-- Do **not** add a separate citations list or a "Source:" line.
-- Answer directly from the provided context. If nothing relevant is found, say:
-  "I'm sorry, I couldn't find an answer based on the available information."`;
+    const allowedUrls = matches.map((m) => normalizeUrl((m.metadata as any)?.url || "")).filter(Boolean);
+    const linkHints = ["You may ONLY use these URLs in links:", ...allowedUrls.map((u) => `- ${u}`)].join("\n");
 
-    // Compose user message
-    const user =
-        contexts.length > 0
-            ? `Question: ${q}\n\nContext:\n${contexts.join("\n\n")}`
-            : `Question: ${q}\n\nContext:\n(no relevant context)`; // helps the model follow the "no info" rule
+    const system = cfg.search?.system_prompt || `You are a helpful assistant. Use all provided context and metadata to answer accurately.
+Include inline Markdown links only from this list:
+${linkHints}
+If unsure, respond: "I'm sorry, I couldn't find an answer based on the available information."`;
 
+    const user = `Question: ${q}\n\nContext:\n${contexts.join("\n\n")}`;
     const chatModel = cfg.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
     const temperature = Number(cfg.search?.chat_temperature ?? 0.1);
+    const max_output_tokens = Math.max(128, Math.min(2048, Number(cfg.search?.max_output_tokens ?? 1024)));
 
     const chat = await env.AI.run(chatModel as any, {
         messages: [
@@ -199,27 +242,14 @@ Rules:
             { role: "user", content: user },
         ],
         temperature,
-        max_output_tokens: 400,
+        max_output_tokens,
     } as any);
 
-    let answer =
-        (chat as any).response ??
-        (Array.isArray((chat as any).output)
-            ? (chat as any).output.map((t: any) => t?.content ?? "").join("\n")
-            : String(chat));
-
-    // Small cleanup: if a model still adds "Source:" lines, strip them.
-    answer = answer.replace(/\n?\s*source:\s*.*$/gim, "").trim();
-
-    return json({
-        ok: true,
-        q,
-        k,
-        answer, // <-- contains inline Markdown links
-        // no citations field
-    });
+    const answer = (chat as any).response || "I'm sorry, I couldn't find an answer based on the available information.";
+    return json({ ok: true, q, k, answer, _debug: { matches: matches.slice(0, 3) } });
 }
 
+// ---- Debug ----
 async function handleDebugEmbed(req: Request, env: Env, cfg: SiteConfig) {
     const u = new URL(req.url);
     const q = (u.searchParams.get("q") || "").trim();
@@ -232,7 +262,6 @@ async function handleDebugEmbed(req: Request, env: Env, cfg: SiteConfig) {
     }
 }
 
-/** Single-argument query({ vectorId }) to avoid 0-dims error */
 async function handleDebugQueryById(req: Request, env: Env, cfg: SiteConfig) {
     const u = new URL(req.url);
     const site = (u.searchParams.get("site") || "").trim();
@@ -248,8 +277,7 @@ async function handleDebugQueryById(req: Request, env: Env, cfg: SiteConfig) {
     return json({ ok: true, id, k, results: post });
 }
 
-/* ---------------- CORS wrapper ---------------- */
-
+// ---- CORS + Router ----
 function withCors(originAllow: string | null, res: Response): Response {
     const headers = new Headers(res.headers);
     if (originAllow) headers.set("Access-Control-Allow-Origin", originAllow);
@@ -259,17 +287,12 @@ function withCors(originAllow: string | null, res: Response): Response {
     return new Response(res.body, { status: res.status, headers });
 }
 
-/* ---------------- Router ---------------- */
-
 export default {
     async fetch(req: Request, env: Env): Promise<Response> {
         const u = new URL(req.url);
         const { pathname } = u;
-
-        // site is required for all except /status (but we still try to use it for CORS)
         const site = (u.searchParams.get("site") || "").trim();
 
-        // Load cfg if site present (needed for CORS + auth)
         let cfg: SiteConfig | undefined;
         if (site) {
             try { cfg = await loadSiteConfig(env, site); }
@@ -279,40 +302,25 @@ export default {
         const origin = req.headers.get("Origin");
         const originAllow = cfg ? allowOrigin(origin, cfg, env) : null;
 
-        // Preflight
         if (req.method === "OPTIONS") {
             if (origin && !originAllow) return json({ ok: false, error: "CORS: origin not allowed" }, { status: 403 });
             return withCors(originAllow || "*", new Response(null, { status: 200 }));
         }
 
         try {
-            // Public status (no API key)
             if (req.method === "GET" && pathname === "/status") {
                 const res = await handleStatus(req, env);
                 return withCors(originAllow, res);
             }
 
-            // Everything else requires API key (accept top-level or nested)
             if (!cfg) return withCors(originAllow, json({ ok: false, error: "Missing or invalid site" }, { status: 400 }));
             const auth = await requireApiKey(req, cfg);
             if (auth) return withCors(originAllow, auth);
 
-            if (req.method === "GET" && pathname === "/search") {
-                const res = await handleSearch(req, env, cfg);
-                return withCors(originAllow, res);
-            }
-            if (req.method === "POST" && pathname === "/ask") {
-                const res = await handleAsk(req, env, cfg);
-                return withCors(originAllow, res);
-            }
-            if (req.method === "GET" && pathname === "/debug/embed") {
-                const res = await handleDebugEmbed(req, env, cfg);
-                return withCors(originAllow, res);
-            }
-            if (req.method === "GET" && pathname === "/debug/query-by-id") {
-                const res = await handleDebugQueryById(req, env, cfg);
-                return withCors(originAllow, res);
-            }
+            if (req.method === "GET" && pathname === "/search") return withCors(originAllow, await handleSearch(req, env, cfg));
+            if (req.method === "POST" && pathname === "/ask") return withCors(originAllow, await handleAsk(req, env, cfg));
+            if (req.method === "GET" && pathname === "/debug/embed") return withCors(originAllow, await handleDebugEmbed(req, env, cfg));
+            if (req.method === "GET" && pathname === "/debug/query-by-id") return withCors(originAllow, await handleDebugQueryById(req, env, cfg));
 
             return withCors(originAllow, new Response("Not found", { status: 404 }));
         } catch (e: any) {
