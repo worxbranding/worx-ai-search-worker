@@ -168,8 +168,13 @@ async function sha1Hex(s: string): Promise<string> {
 }
 
 /** Try to cache embeddings in KV when available; no-ops if KV write isn’t bound. */
-async function cachedEmbed(env: Env, model: string, dims: number, text: string, ctx?: ExecutionContext): Promise<number[]> {
+async function cachedEmbed(env: Env, model: string, dims: number, text: string, ctx?: ExecutionContext, useCache: boolean = false): Promise<number[]> {
     const key = `qemb:${await sha1Hex(text)}`;
+
+    // If caching is not requested, bypass KV entirely
+    if (!useCache) {
+        return await time("embed(cachedEmbed)", () => embed(env, model, dims, text));
+    }
 
     try {
         const cached = await env.CONFIG.get<number[]>(key, "json");
@@ -276,10 +281,11 @@ async function handleSearch(req: Request, env: Env, cfg: SiteConfig, ctx?: Execu
     const q = (u.searchParams.get("q") || "").trim();
     const k = cfg.search?.topK;
     const wantDebug = (u.searchParams.get("debug") || "") === "1";
+    const wantCaching = (u.searchParams.get("caching") || "") === "1";
     if (!site) { stop(); return json({ ok: false, error: "Missing ?site=" }, { status: 400 }); }
     if (!q) { stop(); return json({ ok: false, error: "Missing ?q=" }, { status: 400 }); }
 
-    const vec = await time("cachedEmbed(search)", () => cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, q, ctx));
+    const vec = await time("cachedEmbed(search)", () => cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, q, ctx, wantCaching));
     // @ts-ignore
     const out = await time("VECTORIZE.query(search)", () => env.VECTORIZE.query(vec, { topK: k, returnMetadata: true }));
     const pre = (out?.matches || []) as SearchMatch[];
@@ -294,6 +300,9 @@ async function handleSearch(req: Request, env: Env, cfg: SiteConfig, ctx?: Execu
 // ---- Enhanced ASK ----
 async function handleAsk(req: Request, env: Env, cfg: SiteConfig, ctx?: ExecutionContext) {
     const stop = startTimer("handleAsk");
+    const u = new URL(req.url);
+    const wantDebug = (u.searchParams.get("debug") || "") === "1";
+    const wantCaching = (u.searchParams.get("caching") || "") === "1";
     const body = (await req.json().catch(() => ({}))) as { site?: string; q?: string; k?: number };
     const site = (body.site || "").trim();
     const q = (body.q || "").trim();
@@ -301,7 +310,7 @@ async function handleAsk(req: Request, env: Env, cfg: SiteConfig, ctx?: Executio
     if (!site) { stop(); return json({ ok: false, error: "Missing field 'site'" }, { status: 400 }); }
     if (!q) { stop(); return json({ ok: false, error: "Missing field 'q'" }, { status: 400 }); }
 
-    const vec = await time("cachedEmbed(ask)", () => cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, q, ctx));
+    const vec = await time("cachedEmbed(ask)", () => cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, q, ctx, wantCaching));
     // @ts-ignore
     const out = await time("VECTORIZE.query(ask)", () => env.VECTORIZE.query(vec, { topK: k, includeMetadata: true, returnMetadata: true }));
     const matches = filterToSite(site, out?.matches || []);
@@ -336,16 +345,32 @@ If unsure, respond: "I'm sorry, I couldn't find an answer based on the available
     // Answer cache: short TTL to speed up repeated questions while keeping freshness
     const ansKeyRaw = JSON.stringify({ site, q, k, chatModel, temperature, max_output_tokens, systemHash: await sha1Hex(system) });
     const ansKey = `ans:${await sha1Hex(ansKeyRaw)}`;
-    try {
-        const cachedAns = await env.CONFIG.get<string>(ansKey, "text");
-        if (cachedAns && cachedAns.trim()) {
-            log("[cachedAnswer] HIT", ansKey);
-            const response = json({ ok: true, q, k, answer: cachedAns, _debug: { matches: matches.slice(0, 3), cache: "hit" } });
-            stop();
-            return response;
+    if (wantCaching) {
+        try {
+            const cachedAns = await env.CONFIG.get<string>(ansKey, "text");
+            if (cachedAns && cachedAns.trim()) {
+                log("[cachedAnswer] HIT", ansKey);
+                const nowIso = new Date().toISOString();
+                const foundIndex = Array.isArray(matches) && matches.length > 0;
+                const stats = {
+                    question: q,
+                    found_index: foundIndex,
+                    cached: true,
+                    model: chatModel,
+                    tokens_input: null,
+                    tokens_output: null,
+                    total_tokens: null,
+                    timestamp: nowIso,
+                };
+                const bodyOut: any = { ok: true, q, k, answer: cachedAns, stats };
+                if (wantDebug) bodyOut._debug = { matches: matches.slice(0, 3), cache: "hit" };
+                const response = json(bodyOut);
+                stop();
+                return response;
+            }
+        } catch (e) {
+            log("[cachedAnswer] READ-ERROR", ansKey, String((e as Error)?.message || e));
         }
-    } catch (e) {
-        log("[cachedAnswer] READ-ERROR", ansKey, String((e as Error)?.message || e));
     }
 
     const chat = await time("AI.run(chat)", () => env.AI.run(chatModel as any, {
@@ -359,23 +384,43 @@ If unsure, respond: "I'm sorry, I couldn't find an answer based on the available
 
     const answer = (chat as any).response || "I'm sorry, I couldn't find an answer based on the available information.";
 
-    // Store answer in cache with TTL when KV is writable
+    // Store answer in cache with TTL when KV is writable and caching is enabled
     const ansTtl = Math.max(60, Math.min(86400, Number(cfg.search?.answer_cache_ttl ?? 600)));
-    try {
-        if (ctx?.waitUntil && env.CONFIG.put) {
-            ctx.waitUntil(env.CONFIG.put(ansKey, answer, { expirationTtl: ansTtl }));
-            log("[cachedAnswer] STORE-QUEUED", ansKey, `ttl=${ansTtl}`);
-        } else {
-            const stopPut = startTimer("KV put ans");
-            await env.CONFIG.put!(ansKey, answer, { expirationTtl: ansTtl });
-            stopPut();
-            log("[cachedAnswer] STORED", ansKey, `ttl=${ansTtl}`);
+    if (wantCaching) {
+        try {
+            if (ctx?.waitUntil && env.CONFIG.put) {
+                ctx.waitUntil(env.CONFIG.put(ansKey, answer, { expirationTtl: ansTtl }));
+                log("[cachedAnswer] STORE-QUEUED", ansKey, `ttl=${ansTtl}`);
+            } else {
+                const stopPut = startTimer("KV put ans");
+                await env.CONFIG.put!(ansKey, answer, { expirationTtl: ansTtl });
+                stopPut();
+                log("[cachedAnswer] STORED", ansKey, `ttl=${ansTtl}`);
+            }
+        } catch (e) {
+            log("[cachedAnswer] STORE-SKIP", ansKey, "KV not writable or put() unavailable");
         }
-    } catch (e) {
-        log("[cachedAnswer] STORE-SKIP", ansKey, "KV not writable or put() unavailable");
     }
 
-    const response = json({ ok: true, q, k, answer, _debug: { matches: matches.slice(0, 3), cache: "miss" } });
+    const usage = (chat as any)?.usage || (chat as any)?.meta?.usage || {};
+    const tokens_input = (usage?.input_tokens ?? usage?.prompt_tokens ?? usage?.inputTokens ?? null) as number | null;
+    const tokens_output = (usage?.output_tokens ?? usage?.completion_tokens ?? usage?.outputTokens ?? null) as number | null;
+    const total_tokens = (usage?.total_tokens ?? (tokens_input != null && tokens_output != null ? tokens_input + tokens_output : null)) as number | null;
+    const nowIso2 = new Date().toISOString();
+    const foundIndex2 = Array.isArray(matches) && matches.length > 0;
+    const stats = {
+        question: q,
+        found_index: foundIndex2,
+        cached: false,
+        model: chatModel,
+        tokens_input,
+        tokens_output,
+        total_tokens,
+        timestamp: nowIso2,
+    };
+    const bodyOut: any = { ok: true, q, k, answer, stats };
+    if (wantDebug) bodyOut._debug = { matches: matches.slice(0, 3), cache: "miss" };
+    const response = json(bodyOut);
     stop();
     return response;
 }
@@ -464,6 +509,7 @@ async function handleDebugQueryById(req: Request, env: Env, cfg: SiteConfig) {
     const k = Math.max(1, Math.min(24, Number.isFinite(kParsed) ? kParsed : 3));
     const useRaw = ["1", "true", "yes"].includes((u.searchParams.get("raw") || "").trim().toLowerCase());
     const forceDoc = ["1", "true", "yes"].includes((u.searchParams.get("doc") || "").trim().toLowerCase());
+    const wantCaching = (u.searchParams.get("caching") || "") === "1";
     if (!site) { stop(); return json({ ok: false, error: "Missing ?site=" }, { status: 400 }); }
     if (!idRaw) { stop(); return json({ ok: false, error: "Missing ?id" }, { status: 400 }); }
 
@@ -542,7 +588,7 @@ async function handleDebugQueryById(req: Request, env: Env, cfg: SiteConfig) {
                 const txt = await env.CONFIG.get<string>(kvKey, "text");
                 if (txt && txt.trim()) {
                     const snippet = txt.slice(0, 3000);
-                    const vec = await cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, snippet);
+                    const vec = await cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, snippet, undefined, wantCaching);
                     // @ts-ignore
                     const out = await env.VECTORIZE.query(vec, { topK: k, returnMetadata: true, includeMetadata: true });
                     const post = filterToSite(site, out?.matches || []);
