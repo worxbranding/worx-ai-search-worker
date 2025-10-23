@@ -83,7 +83,7 @@ function filterToSite(site: string, matches: SearchMatch[]): SearchMatch[] {
 
 // Robust Vectorize v2 query-by-id wrapper: tries multiple request shapes
 async function vectorizeQueryById(env: Env, id: string, k: number): Promise<{ matches?: Array<any> } | null> {
-    const options = { topK: k, returnMetadata: true } as any;
+    const options = { topK: k, returnMetadata: true, includeMetadata: true } as any;
     const shapes: Array<{ desc: string; payload: any }> = [
         { desc: "{ id }", payload: { id, ...options } },
         { desc: "{ vectorId }", payload: { vectorId: id, ...options } },
@@ -458,7 +458,10 @@ async function handleDebugQueryById(req: Request, env: Env, cfg: SiteConfig) {
     const u = new URL(req.url);
     const site = (u.searchParams.get("site") || "").trim();
     const idRaw = (u.searchParams.get("id") || "").trim();
-    const k = Math.max(1, Math.min(24, Number(u.searchParams.get("k") || 3)));
+    const kRaw = (u.searchParams.get("k") || "").trim();
+    const kDigits = (kRaw.match(/\d+/)?.[0] || "");
+    const kParsed = parseInt(kDigits, 10);
+    const k = Math.max(1, Math.min(24, Number.isFinite(kParsed) ? kParsed : 3));
     const useRaw = ["1", "true", "yes"].includes((u.searchParams.get("raw") || "").trim().toLowerCase());
     const forceDoc = ["1", "true", "yes"].includes((u.searchParams.get("doc") || "").trim().toLowerCase());
     if (!site) { stop(); return json({ ok: false, error: "Missing ?site=" }, { status: 400 }); }
@@ -521,11 +524,49 @@ async function handleDebugQueryById(req: Request, env: Env, cfg: SiteConfig) {
         }
     }
 
+    // Fallback: try embedding the KV doc text for candidate doc keys and query by vector
+    try {
+        // Build candidate KV doc keys from tried IDs
+        const kvCandidates = Array.from(new Set(
+            tryIds.flatMap((vid) => {
+                const arr: string[] = [];
+                if (vid.startsWith("doc:")) arr.push(vid);
+                arr.push(`doc:${vid}`);
+                if (!vid.startsWith(`${site}:`)) arr.push(`doc:${site}:${vid}`);
+                return arr;
+            })
+        ));
+
+        for (const kvKey of kvCandidates) {
+            try {
+                const txt = await env.CONFIG.get<string>(kvKey, "text");
+                if (txt && txt.trim()) {
+                    const snippet = txt.slice(0, 3000);
+                    const vec = await cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, snippet);
+                    // @ts-ignore
+                    const out = await env.VECTORIZE.query(vec, { topK: k, returnMetadata: true, includeMetadata: true });
+                    const post = filterToSite(site, out?.matches || []);
+                    if (post.length > 0) {
+                        log("[debug/query-by-id] FALLBACK success via KV doc", kvKey);
+                        const res = json({ ok: true, id: idRaw, k, results: post, note: `fallback: embedded KV text via ${kvKey}` });
+                        stop();
+                        return res;
+                    }
+                }
+            } catch (e) {
+                // ignore and try next
+            }
+        }
+    } catch (e) {
+        log("[debug/query-by-id] fallback error", String((e as any)?.message || e));
+    }
+
     const hints = [
         "The provided id might not exist in the index.",
         "Try adding &doc=1 to query using doc:-prefixed ids (e.g., doc:<site>:page:<id>).",
         "If your vectors are stored without a site prefix, try adding &raw=1 to use the id exactly as provided.",
         `Tried ids: ${tryIds.join(", ")}`,
+        "Note: We also attempted a fallback by embedding the KV document text when available."
     ];
 
     const errMsg = lastErr ? String(lastErr?.message || lastErr) : "No matches returned for any attempted id variant";
