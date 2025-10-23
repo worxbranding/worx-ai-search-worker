@@ -55,7 +55,8 @@ Create a JSON object in KV under key `cfg:<site>`. Required fields are marked.
     // Performance/cost tunables
     "max_context_docs": 6,           // max docs included in /ask prompt context
     "max_kv_text_chars": 3000,       // truncate KV text per doc to this many chars
-    "answer_cache_ttl": 600          // seconds for /ask answer cache
+    "answer_cache_ttl": 600,         // seconds for /ask answer cache
+    "caching": true                  // default caching behavior (true/false); can be overridden per-request
   }
 }
 ```
@@ -78,11 +79,18 @@ Notes:
 
 
 ## Caching controls
-- Caching is opt‑in per request via `caching=1` query parameter.
-- Without `caching=1`, all cache reads/writes are bypassed.
-- With `caching=1`:
-  - Query embedding cache `qemb:*` is used for /search and /ask.
-  - /ask answer cache `ans:*` is checked and stored (short TTL, default 600s).
+Caching can be controlled at two levels with clear precedence:
+
+1) Per-request override (highest precedence)
+- Add `caching=1` to force caching ON for this request.
+- Add `caching=0` to force caching OFF for this request.
+
+2) Site config default (fallback)
+- Set `search.caching: true | false` in `cfg:<site>` to define the default behavior when the URL has no `caching` parameter.
+
+What is cached when ON:
+- Query embedding cache `qemb:*` is used for /search and /ask.
+- /ask answer cache `ans:*` is checked and stored (TTL default 600s; configurable via `search.answer_cache_ttl`).
 
 
 ## Endpoints

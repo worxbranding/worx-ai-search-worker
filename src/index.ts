@@ -47,6 +47,7 @@ type SiteConfig = {
         max_context_docs?: number;          // default 6
         max_kv_text_chars?: number;         // default 3000
         answer_cache_ttl?: number;          // seconds, default 600
+        caching?: boolean;                  // default false; can be overridden per-request via caching=1|0
     };
 };
 
@@ -119,6 +120,15 @@ function allowOrigin(origin: string | null, cfg: SiteConfig, env: Env): string |
     if (!origin) return null;
     if (allowed.includes("*")) return "*";
     return allowed.includes(origin) ? origin : null;
+}
+
+// Resolve whether caching should be used for this request.
+// Precedence: query param caching=1|0 overrides config (cfg.search.caching), default false.
+function resolveCaching(u: URL, cfg: SiteConfig): boolean {
+    const raw = (u.searchParams.get("caching") || "").trim();
+    if (raw === "1") return true;
+    if (raw === "0") return false;
+    return !!cfg.search?.caching;
 }
 
 function wantApiKey(cfg: SiteConfig): string {
@@ -281,7 +291,7 @@ async function handleSearch(req: Request, env: Env, cfg: SiteConfig, ctx?: Execu
     const q = (u.searchParams.get("q") || "").trim();
     const k = cfg.search?.topK;
     const wantDebug = (u.searchParams.get("debug") || "") === "1";
-    const wantCaching = (u.searchParams.get("caching") || "") === "1";
+    const wantCaching = resolveCaching(u, cfg);
     if (!site) { stop(); return json({ ok: false, error: "Missing ?site=" }, { status: 400 }); }
     if (!q) { stop(); return json({ ok: false, error: "Missing ?q=" }, { status: 400 }); }
 
@@ -302,7 +312,7 @@ async function handleAsk(req: Request, env: Env, cfg: SiteConfig, ctx?: Executio
     const stop = startTimer("handleAsk");
     const u = new URL(req.url);
     const wantDebug = (u.searchParams.get("debug") || "") === "1";
-    const wantCaching = (u.searchParams.get("caching") || "") === "1";
+    const wantCaching = resolveCaching(u, cfg);
     const body = (await req.json().catch(() => ({}))) as { site?: string; q?: string; k?: number };
     const site = (body.site || "").trim();
     const q = (body.q || "").trim();
@@ -509,7 +519,7 @@ async function handleDebugQueryById(req: Request, env: Env, cfg: SiteConfig) {
     const k = Math.max(1, Math.min(24, Number.isFinite(kParsed) ? kParsed : 3));
     const useRaw = ["1", "true", "yes"].includes((u.searchParams.get("raw") || "").trim().toLowerCase());
     const forceDoc = ["1", "true", "yes"].includes((u.searchParams.get("doc") || "").trim().toLowerCase());
-    const wantCaching = (u.searchParams.get("caching") || "") === "1";
+    const wantCaching = resolveCaching(u, cfg);
     if (!site) { stop(); return json({ ok: false, error: "Missing ?site=" }, { status: 400 }); }
     if (!idRaw) { stop(); return json({ ok: false, error: "Missing ?id" }, { status: 400 }); }
 
