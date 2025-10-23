@@ -4,7 +4,9 @@
   "version": "0.0.1",
   "scripts": {
     "dev": "wrangler dev --remote",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "monitor": "wrangler tail worx-search",
+    "clear-cache": "curl -s \"https://worx-search.worxbranding.workers.dev/admin/clear-cache?site=worxbranding-dev\" \\\n  -H \"x-api-key: dev-secret-123\" | jq ."
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251011.0",
