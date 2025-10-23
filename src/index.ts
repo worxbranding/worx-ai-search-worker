@@ -81,6 +81,38 @@ function filterToSite(site: string, matches: SearchMatch[]): SearchMatch[] {
     });
 }
 
+// Robust Vectorize v2 query-by-id wrapper: tries multiple request shapes
+async function vectorizeQueryById(env: Env, id: string, k: number): Promise<{ matches?: Array<any> } | null> {
+    const options = { topK: k, returnMetadata: true } as any;
+    const shapes: Array<{ desc: string; payload: any }> = [
+        { desc: "{ id }", payload: { id, ...options } },
+        { desc: "{ vectorId }", payload: { vectorId: id, ...options } },
+        { desc: "{ vector: { id } }", payload: { vector: { id }, ...options } },
+    ];
+
+    let lastErr: any = null;
+    for (const s of shapes) {
+        try {
+            // @ts-ignore Cloudflare Vectorize typings are permissive
+            const out = await time(`VECTORIZE.query(byId:${s.desc})`, () => env.VECTORIZE.query(s.payload));
+            if (out && Array.isArray(out.matches)) return out;
+            lastErr = lastErr || new Error("No matches returned");
+        } catch (e: any) {
+            lastErr = e;
+            const msg = String(e?.message || e);
+            // Continue trying next shape on common id-not-found or invalid-vector errors
+            if (msg.includes("40006") || msg.toLowerCase().includes("invalid query vector")) {
+                log("[vectorizeQueryById] failed", s.desc, "for id", id, "->", msg);
+                continue;
+            }
+            // Other errors: rethrow
+            throw e;
+        }
+    }
+    if (lastErr) throw lastErr;
+    return null;
+}
+
 function allowOrigin(origin: string | null, cfg: SiteConfig, env: Env): string | null {
     const fromCfg = cfg.search?.allowed_origins || [];
     let allowed = fromCfg.length ? fromCfg : (env.ALLOWED_ORIGINS || "").split(",").map(s => s.trim()).filter(Boolean);
@@ -425,18 +457,137 @@ async function handleDebugQueryById(req: Request, env: Env, cfg: SiteConfig) {
     const stop = startTimer("handleDebugQueryById");
     const u = new URL(req.url);
     const site = (u.searchParams.get("site") || "").trim();
-    let id = (u.searchParams.get("id") || "").trim();
+    const idRaw = (u.searchParams.get("id") || "").trim();
     const k = Math.max(1, Math.min(24, Number(u.searchParams.get("k") || 3)));
+    const useRaw = ["1", "true", "yes"].includes((u.searchParams.get("raw") || "").trim().toLowerCase());
+    const forceDoc = ["1", "true", "yes"].includes((u.searchParams.get("doc") || "").trim().toLowerCase());
     if (!site) { stop(); return json({ ok: false, error: "Missing ?site=" }, { status: 400 }); }
-    if (!id) { stop(); return json({ ok: false, error: "Missing ?id" }, { status: 400 }); }
+    if (!idRaw) { stop(); return json({ ok: false, error: "Missing ?id" }, { status: 400 }); }
 
-    id = sitePrefixedId(site, id);
-    // @ts-ignore
-    const out = await time("VECTORIZE.query(byId)", () => env.VECTORIZE.query({ vectorId: id, topK: k, returnMetadata: true }));
-    const post = filterToSite(site, out?.matches || []);
-    const res = json({ ok: true, id, k, results: post });
+    // Build a robust list of IDs to try:
+    // - If raw=1, only try the provided id exactly as-is.
+    // - If doc=1, try only doc:-prefixed variants of the provided forms.
+    // - Otherwise, try in order: site-prefixed, as-provided, stripped; then their doc:-prefixed counterparts.
+    const prefixed = sitePrefixedId(site, idRaw);
+    const stripped = idRaw.startsWith(`${site}:`) ? idRaw.slice(site.length + 1) : null;
+
+    let candidateIds: string[] = [];
+    if (useRaw) {
+        candidateIds = [idRaw];
+    } else if (forceDoc) {
+        candidateIds = [
+            `doc:${prefixed}`,
+            `doc:${idRaw}`,
+            ...(stripped ? [`doc:${stripped}`] : []),
+        ];
+    } else {
+        candidateIds = [
+            prefixed,
+            idRaw,
+            ...(stripped ? [stripped] : []),
+            `doc:${prefixed}`,
+            `doc:${idRaw}`,
+            ...(stripped ? [`doc:${stripped}`] : []),
+        ];
+    }
+
+    const tryIds: string[] = Array.from(new Set(candidateIds.filter(Boolean)));
+
+    let lastErr: any = null;
+
+    for (let i = 0; i < tryIds.length; i++) {
+        const vectorId = tryIds[i];
+        try {
+            const out = await vectorizeQueryById(env, vectorId, k);
+            const post = filterToSite(site, out?.matches || []);
+            if ((out?.matches && out.matches.length > 0) || post.length > 0) {
+                log("[debug/query-by-id] SUCCESS with", vectorId);
+                const res = json({ ok: true, id: vectorId, k, results: post });
+                stop();
+                return res;
+            }
+            // If no matches, try next id if available
+            lastErr = lastErr || new Error("No matches returned for this id");
+        } catch (e: any) {
+            lastErr = e;
+            const msg = String(e?.message || e);
+            // 40006 is commonly returned when the id is not found in the index
+            if (msg.includes("40006") || msg.toLowerCase().includes("invalid query vector")) {
+                log("[debug/query-by-id] attempt failed for", vectorId, "->", msg);
+                continue; // try next id if available
+            }
+            // For any other error, break and report
+            break;
+        }
+    }
+
+    const hints = [
+        "The provided id might not exist in the index.",
+        "Try adding &doc=1 to query using doc:-prefixed ids (e.g., doc:<site>:page:<id>).",
+        "If your vectors are stored without a site prefix, try adding &raw=1 to use the id exactly as provided.",
+        `Tried ids: ${tryIds.join(", ")}`,
+    ];
+
+    const errMsg = lastErr ? String(lastErr?.message || lastErr) : "No matches returned for any attempted id variant";
     stop();
-    return res;
+    return json({ ok: false, error: errMsg, site, id: idRaw, k, hints, tried: tryIds }, { status: 400 });
+}
+
+// List candidate vector IDs by scanning CONFIG KV for document keys (doc:<site>:...)
+async function handleDebugListIds(req: Request, env: Env, cfg: SiteConfig) {
+    const stop = startTimer("handleDebugListIds");
+    const u = new URL(req.url);
+    const site = (u.searchParams.get("site") || "").trim();
+    const limit = Math.max(1, Math.min(1000, Number(u.searchParams.get("limit") || 100)));
+    const cursor = u.searchParams.get("cursor") || undefined;
+    const wantStripped = ["1", "true", "yes"].includes((u.searchParams.get("stripped") || "").trim().toLowerCase());
+    const wantValidate = ["1", "true", "yes"].includes((u.searchParams.get("validate") || "").trim().toLowerCase());
+    if (!site) { stop(); return json({ ok: false, error: "Missing ?site=" }, { status: 400 }); }
+    if (!env.CONFIG.list) { stop(); return json({ ok: false, error: "CONFIG KV does not support list() in this environment" }, { status: 501 }); }
+
+    const prefix = `doc:${site}:`;
+    const page = await time(`KV list ${prefix}`, () => env.CONFIG.list!({ prefix, limit, cursor }));
+    const names = (page.keys || []).map(k => k.name);
+    const idsPrefixed = names.map(n => n.startsWith("doc:") ? n.slice(4) : n);
+    const idsStripped = idsPrefixed.map(v => v.startsWith(`${site}:`) ? v.slice(site.length + 1) : v);
+
+    let validatedOk: string[] = [];
+    let validatedFail: string[] = [];
+
+    if (wantValidate && idsPrefixed.length) {
+        for (const vid of idsPrefixed) {
+            try {
+                await vectorizeQueryById(env, vid, 1);
+                validatedOk.push(vid);
+            } catch (e: any) {
+                const msg = String(e?.message || e);
+                if (msg.includes("40006") || msg.toLowerCase().includes("invalid query vector")) {
+                    validatedFail.push(vid);
+                } else {
+                    // Non-existence vs other error: still record as failure but annotate in logs
+                    log("[debug/list-ids] validate error for", vid, "->", msg);
+                    validatedFail.push(vid);
+                }
+            }
+        }
+    }
+
+    const body: any = {
+        ok: true,
+        site,
+        prefix,
+        limit,
+        total_page: names.length,
+        list_complete: !!(page as any).list_complete,
+        next_cursor: (page as any).cursor || null,
+        ids_prefixed: idsPrefixed,
+        ids_stripped: idsStripped,
+    };
+    if (wantStripped) body.ids = idsStripped; else body.ids = idsPrefixed;
+    if (wantValidate) body.validation = { ok: validatedOk.length, fail: validatedFail.length, fail_sample: validatedFail.slice(0, 20) };
+
+    stop();
+    return json(body);
 }
 
 // ---- CORS + Router ----
@@ -486,6 +637,7 @@ export default {
             if (req.method === "GET" && pathname === "/admin/clear-cache") return withCors(originAllow, await time("route:/admin/clear-cache", () => handleClearCache(req, env, cfg!, ctx)));
             if (req.method === "GET" && pathname === "/debug/embed") return withCors(originAllow, await time("route:/debug/embed", () => handleDebugEmbed(req, env, cfg!)));
             if (req.method === "GET" && pathname === "/debug/query-by-id") return withCors(originAllow, await time("route:/debug/query-by-id", () => handleDebugQueryById(req, env, cfg!)));
+            if (req.method === "GET" && pathname === "/debug/list-ids") return withCors(originAllow, await time("route:/debug/list-ids", () => handleDebugListIds(req, env, cfg!)));
 
             return withCors(originAllow, new Response("Not found", { status: 404 }));
         } catch (e: any) {
