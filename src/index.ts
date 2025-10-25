@@ -228,6 +228,15 @@ function normalizeUrl(u: string): string {
     }
 }
 
+function isNoAnswer(text: string | null | undefined): boolean {
+    if (!text) return true;
+    const s = String(text).trim().toLowerCase();
+    // Match your fallback phrasing (be forgiving on punctuation)
+    return /couldn['’]?t find an answer/.test(s) || (
+        /^i['’]?m sorry/.test(s) && /couldn['’]?t find/.test(s)
+    );
+}
+
 // ---- Build enriched document context ----
 async function buildDocContext(env: Env, md: Record<string, any>, maxChars: number = 3000): Promise<string> {
     let parts: string[] = [];
@@ -361,7 +370,8 @@ If unsure, respond: "I'm sorry, I couldn't find an answer based on the available
             if (cachedAns && cachedAns.trim()) {
                 log("[cachedAnswer] HIT", ansKey);
                 const nowIso = new Date().toISOString();
-                const foundIndex = Array.isArray(matches) && matches.length > 0;
+                const noAnswer = isNoAnswer(cachedAns);
+                const foundIndex = (Array.isArray(matches) && matches.length > 0) && !noAnswer;
                 const stats = {
                     question: q,
                     found_index: foundIndex,
@@ -393,7 +403,7 @@ If unsure, respond: "I'm sorry, I couldn't find an answer based on the available
     } as any));
 
     const answer = (chat as any).response || "I'm sorry, I couldn't find an answer based on the available information.";
-
+    const noAnswer = isNoAnswer(answer);
     // Store answer in cache with TTL when KV is writable and caching is enabled
     const ansTtl = Math.max(60, Math.min(86400, Number(cfg.search?.answer_cache_ttl ?? 600)));
     if (wantCaching) {
@@ -417,7 +427,7 @@ If unsure, respond: "I'm sorry, I couldn't find an answer based on the available
     const tokens_output = (usage?.output_tokens ?? usage?.completion_tokens ?? usage?.outputTokens ?? null) as number | null;
     const total_tokens = (usage?.total_tokens ?? (tokens_input != null && tokens_output != null ? tokens_input + tokens_output : null)) as number | null;
     const nowIso2 = new Date().toISOString();
-    const foundIndex2 = Array.isArray(matches) && matches.length > 0;
+    const foundIndex2 = (Array.isArray(matches) && matches.length > 0) && !noAnswer;
     const stats = {
         question: q,
         found_index: foundIndex2,
