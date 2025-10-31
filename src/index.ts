@@ -217,72 +217,193 @@ async function cachedEmbed(env: Env, model: string, dims: number, text: string, 
     return emb;
 }
 
-function normalizeUrl(u: string): string {
-    try {
-        const url = new URL(u);
-        url.hash = "";
-        url.search = "";
-        url.hostname = url.hostname.toLowerCase();
-        return url.toString().replace(/\/+$/, "");
-    } catch {
-        return "";
-    }
+type IntentKey =
+    | "person"
+    | "service"
+    | "case_study"
+    | "page_list"
+    | "how_to"
+    | "company_info"
+    | "contact"
+    | "default";
+
+interface IntentResult {
+    intent: IntentKey;
+    keywords: string[];
 }
 
-// ---- Build enriched document context ----
-async function buildDocContext(env: Env, md: Record<string, any>, maxChars: number = 3000): Promise<string> {
-    let parts: string[] = [];
+const LEVEN_LIMIT = 2;
+const INTENT_DEFAULT: IntentKey = "default";
 
-    const url = md.url ? normalizeUrl(md.url) : "";
-    const title = md.title || "Untitled";
-    const seoTitle = md.seo_title || "";
-    const seoDesc = md.seo_description || "";
-    const collection = md.collection || "";
-    const subcat = md.subcategory || "";
-    const parent = md.parent_title || "";
-    const breadcrumbs = (md.breadcrumbs || []).join(" > ");
-    const preview = md.preview || "";
-    const children = md.children_md || "";
-    const path = md.path || "";
+const DEFAULT_SYSTEM_PROMPT = `You are WORX AI, a strategic assistant that answers questions using only content from WORX.
+- Speak from the client partner perspective; avoid using “we”.
+- Keep responses concise, confident, and focused on outcomes.
+- Always include inline Markdown links to the specific page you cite.
+- Use WORX in all caps.
+- If relevant information is missing, reply exactly with: "I couldn’t locate that information in the current WORX content. Try a different phrasing or explore the site for more context."`;
 
-    parts.push(`**${title}** (${url})`);
-    if (seoTitle && seoTitle !== title) parts.push(`SEO Title: ${seoTitle}`);
-    if (seoDesc) parts.push(`SEO Description: ${seoDesc}`);
-    if (collection) parts.push(`Collection: ${collection}`);
-    if (subcat) parts.push(`Subcategory: ${subcat}`);
-    if (parent) parts.push(`Parent: ${parent}`);
-    if (breadcrumbs) parts.push(`Breadcrumbs: ${breadcrumbs}`);
-    if (path) parts.push(`Path: ${path}`);
+const INTENT_GUIDANCE: Record<IntentKey, string> = {
+    person: `Format your answer as a short paragraph that states the person’s role, highlights, and relationship to other team members when relevant. Include a direct inline link to the person’s page.`,
+    service: `Summarize the service in one or two sentences, followed by a concise bullet list of key capabilities or benefits. Link to the service page.`,
+    case_study: `Provide a bulleted list of two or three case studies with bold project names, the sector or challenge, and the measurable outcome. Each item should link to the specific case study.`,
+    page_list: `Return a bullet list of relevant pages or sections. Each bullet should use the page title in bold, a short descriptor, and an inline link.`,
+    how_to: `Outline the recommended steps in a numbered list. Each step should be brief and grounded in the provided content. Link to the source page that details the process.`,
+    company_info: `Deliver a confident overview paragraph that highlights WORX positioning and differentiators. Link to the About or Leadership page as appropriate.`,
+    contact: `Share the preferred contact method (phone, email, form) in sentence form and link directly to the contact page. Include location details when available.`,
+    default: `Answer succinctly using the strongest supporting details. Highlight the most relevant facts and include inline links to the supporting page(s).`,
+};
 
-    const kvKey = md.doc_key;
-    if (kvKey) {
-        const txt = await env.CONFIG.get<string>(kvKey, "text");
-        if (txt && txt.trim()) parts.push(`Full Text:\n${txt.slice(0, Math.max(0, Math.min(8000, maxChars)))}`);
-    }
-    if (preview) parts.push(`Preview:\n${preview}`);
-    if (children) parts.push(`Children:\n${children}`);
-
-    return parts.join("\n\n");
+function normalizeForCompare(value: string): string {
+    return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 }
 
-// ---- Handlers ----
-async function handleStatus(req: Request, env: Env) {
-    const stop = startTimer("handleStatus");
-    const u = new URL(req.url);
-    const site = (u.searchParams.get("site") || "").trim();
-    if (!site) { stop(); return json({ ok: false, error: "Missing ?site=" }, { status: 400 }); }
-    const cfg = await loadSiteConfig(env, site);
-    const res = json({
-        ok: true,
-        site,
-        vectorize: cfg.vectorize.index_name,
-        dims: cfg.vectorize.dims,
-        embed_model: cfg.ai.embed_model,
-        chat_model: cfg.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct",
-        requires_api_key: !!wantApiKey(cfg),
-    });
-    stop();
-    return res;
+function tokenize(value: string): string[] {
+    return normalizeForCompare(value)
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean);
+}
+
+function levenshtein(a: string, b: string): number {
+    if (a === b) return 0;
+    if (!a.length) return b.length;
+    if (!b.length) return a.length;
+    const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+    for (let i = 0; i <= a.length; i++) dp[i][0] = i;
+    for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+    for (let i = 1; i <= a.length; i++) {
+        for (let j = 1; j <= b.length; j++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            dp[i][j] = Math.min(
+                dp[i - 1][j] + 1,
+                dp[i][j - 1] + 1,
+                dp[i - 1][j - 1] + cost
+            );
+        }
+    }
+    return dp[a.length][b.length];
+}
+
+function detectIntent(raw: string): IntentResult {
+    const query = raw.trim();
+    const lower = query.toLowerCase();
+    const keywords: string[] = [];
+
+    const excludeWords = new Set(["who", "is", "was", "the", "a", "an", "about", "tell", "me", "what"]);
+    const extractNameTokens = (input: string) =>
+        tokenize(input)
+            .filter((word) => !excludeWords.has(word))
+            .slice(0, 4);
+
+    const personPatterns = [
+        /^(who\s+(?:is|was)\s+)(.+)$/i,
+        /^(tell\s+me\s+about\s+)(.+)$/i,
+        /(profile|biography|team member)/i,
+    ];
+    for (const pattern of personPatterns) {
+        const match = lower.match(pattern);
+        if (match) {
+            const fragment = match[2] ?? match[0] ?? lower;
+            extractNameTokens(fragment).forEach((kw) => keywords.push(kw));
+            return { intent: "person", keywords };
+        }
+    }
+
+    if (lower.includes("case study") || lower.includes("case studies") || lower.includes("examples of work")) {
+        keywords.push("case");
+        return { intent: "case_study", keywords };
+    }
+
+    if (/(services?|capabilities?|offerings?|solution|package|deliver)/i.test(lower)) {
+        tokenize(lower).forEach((kw) => keywords.push(kw));
+        return { intent: "service", keywords };
+    }
+
+    if (/(list|show|what|which)\s+(?:pages|sections|team|case studies|services)/i.test(lower)) {
+        tokenize(lower).forEach((kw) => keywords.push(kw));
+        return { intent: "page_list", keywords };
+    }
+
+    if (/^how\s+do|how\s+does|steps|process|method|approach/i.test(lower)) {
+        tokenize(lower).forEach((kw) => keywords.push(kw));
+        return { intent: "how_to", keywords };
+    }
+
+    if (/^(what\s+is\s+worx|about\s+worx|company|history|mission)/i.test(lower) || lower.includes("win more with worx")) {
+        keywords.push("worx");
+        return { intent: "company_info", keywords };
+    }
+
+    if (/(contact|reach|phone|email|address|visit)/i.test(lower)) {
+        tokenize(lower).forEach((kw) => keywords.push(kw));
+        return { intent: "contact", keywords };
+    }
+
+    tokenize(lower).forEach((kw) => keywords.push(kw));
+    return { intent: INTENT_DEFAULT, keywords };
+}
+
+function metadataMatchesKeywords(metadata: Record<string, any> | undefined, intent: IntentKey, keywords: string[]): boolean {
+    if (!metadata || !keywords.length) return true;
+    const haystackParts: string[] = [];
+    const fields = [
+        "title",
+        "collection",
+        "subcategory",
+        "preview",
+        "seo_title",
+        "seo_description",
+        "children_md",
+        "breadcrumbs",
+        "parent_title",
+        "path",
+    ];
+    for (const field of fields) {
+        const value = metadata[field];
+        if (typeof value === "string") haystackParts.push(value);
+    }
+    const haystack = haystackParts.join(" ").toLowerCase();
+    if (!haystack) return false;
+
+    for (const keyword of keywords) {
+        const normalizedKeyword = normalizeForCompare(keyword);
+        if (!normalizedKeyword) continue;
+
+        if (haystack.includes(normalizedKeyword)) {
+            return true;
+        }
+
+        if (intent === "person") {
+            const words = tokenize(haystack);
+            for (const word of words) {
+                if (Math.abs(word.length - normalizedKeyword.length) > LEVEN_LIMIT + 1) continue;
+                if (levenshtein(word, normalizedKeyword) <= LEVEN_LIMIT) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+function pickMatchesByIntent(matches: SearchMatch[], intent: IntentKey, keywords: string[]): SearchMatch[] {
+    if (!matches.length) return matches;
+    const seen = new Set<string>();
+    const primary: SearchMatch[] = [];
+    const secondary: SearchMatch[] = [];
+
+    for (const match of matches) {
+        const key = (match.id || "") + ":" + (match.metadata?.title || "");
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        if (metadataMatchesKeywords(match.metadata as any, intent, keywords)) {
+            primary.push(match);
+        } else {
+            secondary.push(match);
+        }
+    }
+
+    return primary.length ? primary : secondary;
 }
 
 function clampTopK(value: number, min = 1, max = 24): number {
@@ -307,11 +428,129 @@ function resolveTopKFromQuery(u: URL, fallback: number): number {
     return clampTopK(fallback);
 }
 
+function clampTemperature(value: number, fallback: number): number {
+    if (!Number.isFinite(value)) return fallback;
+    return Math.min(1, Math.max(0, Number(value)));
+}
+
+function normalizeUrl(u: string): string {
+    try {
+        const url = new URL(u);
+        url.hash = "";
+        url.search = "";
+        url.hostname = url.hostname.toLowerCase();
+        return url.toString().replace(/\/+$/, "");
+    } catch {
+        return "";
+    }
+}
+
+// ---- Build enriched document context ----
+function extractSnippet(text: string, keywords: string[], maxChars: number): string | null {
+    if (!text) return null;
+    const cleaned = text.replace(/\s+/g, " ").trim();
+    if (!cleaned) return null;
+    const sentences = cleaned.split(/(?<=[\.!\?])\s+/);
+    const normalizedKeywords = keywords.map(normalizeForCompare).filter(Boolean);
+
+    const chosen: string[] = [];
+
+    if (normalizedKeywords.length) {
+        for (const sentence of sentences) {
+            const candidate = sentence.trim();
+            if (!candidate) continue;
+            const normalizedSentence = normalizeForCompare(candidate);
+            if (normalizedKeywords.some((kw) => normalizedSentence.includes(kw))) {
+                chosen.push(candidate);
+                if (chosen.join(" ").length >= maxChars) break;
+            }
+        }
+    }
+
+    if (!chosen.length) {
+        chosen.push(...sentences.slice(0, Math.min(3, sentences.length)));
+    }
+
+    const snippet = chosen.join(" ");
+    return snippet.slice(0, Math.max(0, maxChars)) || null;
+}
+
+async function buildDocContext(
+    env: Env,
+    md: Record<string, any>,
+    maxChars: number = 2000,
+    keywords: string[] = [],
+    intent: IntentKey = INTENT_DEFAULT
+): Promise<string> {
+    const parts: string[] = [];
+
+    const url = md.url ? normalizeUrl(md.url) : "";
+    const title = md.title || "Untitled";
+    const preview = md.preview || "";
+    const children = md.children_md || "";
+    const collection = md.collection || "";
+    const parent = md.parent_title || "";
+    const breadcrumbs = Array.isArray(md.breadcrumbs) ? md.breadcrumbs.join(" > ") : (md.breadcrumbs || "");
+
+    if (url) {
+        parts.push(`**${title}** (${url})`);
+    } else {
+        parts.push(`**${title}**`);
+    }
+
+    if (collection) parts.push(`Collection: ${collection}`);
+    if (parent) parts.push(`Parent: ${parent}`);
+    if (breadcrumbs) parts.push(`Breadcrumbs: ${breadcrumbs}`);
+
+    if (preview) {
+        parts.push(`Summary: ${preview}`);
+    }
+
+    if (intent === "page_list" && children) {
+        const trimmedChildren = children.length > maxChars ? `${children.slice(0, maxChars)}…` : children;
+        parts.push(`Pages:\n${trimmedChildren}`);
+    }
+
+    const kvKey = md.doc_key;
+    if (kvKey) {
+        const txt = await env.CONFIG.get<string>(kvKey, "text");
+        const snippet = extractSnippet(txt || "", keywords, maxChars);
+        if (snippet) {
+            parts.push(`Details: ${snippet}`);
+        }
+    }
+
+    return parts.join("\n\n");
+}
+
+// ---- Handlers ----
+async function handleStatus(req: Request, env: Env) {
+    const stop = startTimer("handleStatus");
+    const u = new URL(req.url);
+    const site = (u.searchParams.get("site") || "").trim();
+    if (!site) { stop(); return json({ ok: false, error: "Missing ?site=" }, { status: 400 }); }
+    const cfg = await loadSiteConfig(env, site);
+    const res = json({
+        ok: true,
+        site,
+        vectorize: cfg.vectorize.index_name,
+        dims: cfg.vectorize.dims,
+        embed_model: cfg.ai.embed_model,
+        chat_model: cfg.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct",
+        system_prompt: cfg.search?.system_prompt || null,
+        chat_temperature: cfg.search?.chat_temperature ?? null,
+        requires_api_key: !!wantApiKey(cfg),
+    });
+    stop();
+    return res;
+}
+
 async function handleSearch(req: Request, env: Env, cfg: SiteConfig, ctx?: ExecutionContext) {
     const stop = startTimer("handleSearch");
     const u = new URL(req.url);
     const site = (u.searchParams.get("site") || "").trim();
     const q = (u.searchParams.get("q") || "").trim();
+    const intentInfo = detectIntent(q);
     const cfgTopK = Number(cfg.search?.topK ?? 6);
     const defaultK = clampTopK(Number.isFinite(cfgTopK) ? cfgTopK : 6);
     const k = resolveTopKFromQuery(u, defaultK);
@@ -326,7 +565,7 @@ async function handleSearch(req: Request, env: Env, cfg: SiteConfig, ctx?: Execu
     const pre = (out?.matches || []) as SearchMatch[];
     const post = filterToSite(site, pre);
 
-    const body: any = { ok: true, site, q, k, results: post };
+    const body: any = { ok: true, site, q, k, results: post, intent: intentInfo.intent };
     if (wantDebug) body._debug = { total_pre: pre.length, total_post: post.length, sample_ids: post.slice(0, 3).map((m) => m.id) };
     stop();
     return json(body);
@@ -341,44 +580,89 @@ async function handleAsk(req: Request, env: Env, cfg: SiteConfig, ctx?: Executio
     const body = (await req.json().catch(() => ({}))) as { site?: string; q?: string; k?: number };
     const site = (body.site || "").trim();
     const q = (body.q || "").trim();
-    const k = Math.max(1, Math.min(24, Number(body.k || cfg.search?.topK || 6)));
     if (!site) { stop(); return json({ ok: false, error: "Missing field 'site'" }, { status: 400 }); }
     if (!q) { stop(); return json({ ok: false, error: "Missing field 'q'" }, { status: 400 }); }
 
-    const vec = await time("cachedEmbed(ask)", () => cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, q, ctx, wantCaching));
-    // @ts-ignore
-    const out = await time("VECTORIZE.query(ask)", () => env.VECTORIZE.query(vec, { topK: k, includeMetadata: true, returnMetadata: true }));
-    const matches = filterToSite(site, out?.matches || []);
+    const intentInfo = detectIntent(q);
+    const baseTopK = clampTopK(Number(body.k || cfg.search?.topK || 6));
+    const initialK = Math.min(baseTopK, 3);
+    const fallbackK = Math.max(initialK + 3, Math.min(baseTopK, 6));
 
+    const promptOverrideRaw = typeof body.systemPrompt === "string"
+        ? body.systemPrompt
+        : (typeof body.system_prompt === "string" ? body.system_prompt : "");
+    const promptOverride = promptOverrideRaw ? String(promptOverrideRaw).trim() : "";
+    const configPrompt = cfg.search?.system_prompt || DEFAULT_SYSTEM_PROMPT;
+
+    const temperatureCandidateRaw =
+        body.chatTemperature ??
+        body.temperature ??
+        body.chat_temperature ??
+        null;
+    const configTemperature = Number(cfg.search?.chat_temperature ?? 0.1);
+    const temperatureCandidate =
+        temperatureCandidateRaw !== null &&
+        temperatureCandidateRaw !== undefined &&
+        !Number.isNaN(Number(temperatureCandidateRaw))
+            ? Number(temperatureCandidateRaw)
+            : configTemperature;
+    const temperature = clampTemperature(temperatureCandidate, configTemperature);
+
+    const vec = await time("cachedEmbed(ask)", () => cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, q, ctx, wantCaching));
+    const runQuery = async (topK: number) => {
+        // @ts-ignore
+        const res = await time("VECTORIZE.query(ask)", () => env.VECTORIZE.query(vec, { topK, includeMetadata: true, returnMetadata: true }));
+        return filterToSite(site, res?.matches || []);
+    };
+
+    let matches = pickMatchesByIntent(await runQuery(initialK), intentInfo.intent, intentInfo.keywords);
+    if (!matches.length && fallbackK > initialK) {
+        matches = pickMatchesByIntent(await runQuery(fallbackK), intentInfo.intent, intentInfo.keywords);
+    }
+
+    const resolvedK = matches.length ? Math.min(matches.length, baseTopK) : initialK;
     const maxDocs = Math.max(1, Math.min(10, Number(cfg.search?.max_context_docs ?? 6)));
-    const maxChars = Math.max(200, Math.min(8000, Number(cfg.search?.max_kv_text_chars ?? 3000)));
+    const maxChars = Math.max(200, Math.min(4000, Number(cfg.search?.max_kv_text_chars ?? 2000)));
     const selected = matches.slice(0, Math.min(matches.length, maxDocs));
 
-    const docStop = startTimer("buildDocContext(all)");
+    const docStop = startTimer("buildDocContext(filtered)");
     const contexts = await Promise.all(
         selected.map(async (m, i) => {
             const md = (m.metadata || {}) as any;
-            const docContext = await buildDocContext(env, md, maxChars);
+            const docContext = await buildDocContext(env, md, maxChars, intentInfo.keywords, intentInfo.intent);
             return `[#${i + 1}] ${docContext}`;
         })
     );
     docStop();
 
-    const allowedUrls = Array.from(new Set(matches.map((m) => normalizeUrl((m.metadata as any)?.url || "")).filter(Boolean)));
-    const linkHints = ["You may ONLY use these URLs in links:", ...allowedUrls.map((u) => `- ${u}`)].join("\n");
+    const allowedUrls = Array.from(new Set(selected.map((m) => normalizeUrl((m.metadata as any)?.url || "")).filter(Boolean)));
+    const linkHints = ["Use only these URLs when linking:", ...allowedUrls.map((u) => `- ${u}`)].join("\n");
 
-    const system = cfg.search?.system_prompt || `You are a helpful assistant. Use all provided context and metadata to answer accurately.
-Include inline Markdown links only from this list:
+    const basePrompt = (promptOverride !== "" ? promptOverride : configPrompt).trim();
+    const intentGuide = (INTENT_GUIDANCE[intentInfo.intent] || INTENT_GUIDANCE.default).trim();
+    const system = `${basePrompt}
+
+Link Guidance:
 ${linkHints}
-If unsure, respond: "I'm sorry, I couldn't find an answer based on the available information."`;
+
+Intent focus: ${intentInfo.intent}
+${intentGuide}`.trim();
 
     const user = `Question: ${q}\n\nContext:\n${contexts.join("\n\n")}`;
     const chatModel = cfg.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
-    const temperature = Number(cfg.search?.chat_temperature ?? 0.1);
     const max_output_tokens = Math.max(128, Math.min(2048, Number(cfg.search?.max_output_tokens ?? 1024)));
 
     // Answer cache: short TTL to speed up repeated questions while keeping freshness
-    const ansKeyRaw = JSON.stringify({ site, q, k, chatModel, temperature, max_output_tokens, systemHash: await sha1Hex(system) });
+    const ansKeyRaw = JSON.stringify({
+        site,
+        q,
+        k: resolvedK,
+        chatModel,
+        temperature,
+        max_output_tokens,
+        intent: intentInfo.intent,
+        systemHash: await sha1Hex(system)
+    });
     const ansKey = `ans:${await sha1Hex(ansKeyRaw)}`;
     if (wantCaching) {
         try {
@@ -397,9 +681,11 @@ If unsure, respond: "I'm sorry, I couldn't find an answer based on the available
                     tokens_output: null,
                     total_tokens: null,
                     timestamp: nowIso,
+                    temperature,
+                    intent: intentInfo.intent,
                 };
-                const bodyOut: any = { ok: true, q, k, answer: cachedAns, stats };
-                if (wantDebug) bodyOut._debug = { matches: matches.slice(0, 3), cache: "hit" };
+                const bodyOut: any = { ok: true, q, k: resolvedK, answer: cachedAns, stats, intent: intentInfo.intent };
+                if (wantDebug) bodyOut._debug = { matches: matches.slice(0, 3), cache: "hit", intent: intentInfo.intent };
                 const response = json(bodyOut);
                 stop();
                 return response;
@@ -418,7 +704,7 @@ If unsure, respond: "I'm sorry, I couldn't find an answer based on the available
         max_output_tokens,
     } as any));
 
-    const answer = (chat as any).response || "I'm sorry, I couldn't find an answer based on the available information.";
+    const answer = (chat as any).response || "I couldn’t locate that information in the current WORX content. Try a different phrasing or explore the site for more context.";
     const noAnswer = isNoAnswer(answer);
     // Store answer in cache with TTL when KV is writable and caching is enabled
     const ansTtl = Math.max(60, Math.min(86400, Number(cfg.search?.answer_cache_ttl ?? 600)));
@@ -453,9 +739,11 @@ If unsure, respond: "I'm sorry, I couldn't find an answer based on the available
         tokens_output,
         total_tokens,
         timestamp: nowIso2,
+        temperature,
+        intent: intentInfo.intent,
     };
-    const bodyOut: any = { ok: true, q, k, answer, stats };
-    if (wantDebug) bodyOut._debug = { matches: matches.slice(0, 3), cache: "miss" };
+    const bodyOut: any = { ok: true, q, k: resolvedK, answer, stats, intent: intentInfo.intent };
+    if (wantDebug) bodyOut._debug = { matches: matches.slice(0, 3), cache: "miss", intent: intentInfo.intent };
     const response = json(bodyOut);
     stop();
     return response;
