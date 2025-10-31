@@ -285,12 +285,36 @@ async function handleStatus(req: Request, env: Env) {
     return res;
 }
 
+function clampTopK(value: number, min = 1, max = 24): number {
+    if (!Number.isFinite(value)) return min;
+    return Math.min(Math.max(Math.floor(value), min), max);
+}
+
+function resolveTopKFromQuery(u: URL, fallback: number): number {
+    const candidates = [
+        u.searchParams.get("k"),
+        u.searchParams.get("topK"),
+        u.searchParams.get("top_k"),
+        u.searchParams.get("limit"),
+    ];
+    for (const raw of candidates) {
+        if (!raw) continue;
+        const n = Number(raw);
+        if (!Number.isFinite(n)) continue;
+        const clamped = clampTopK(n);
+        if (clamped > 0) return clamped;
+    }
+    return clampTopK(fallback);
+}
+
 async function handleSearch(req: Request, env: Env, cfg: SiteConfig, ctx?: ExecutionContext) {
     const stop = startTimer("handleSearch");
     const u = new URL(req.url);
     const site = (u.searchParams.get("site") || "").trim();
     const q = (u.searchParams.get("q") || "").trim();
-    const k = cfg.search?.topK;
+    const cfgTopK = Number(cfg.search?.topK ?? 6);
+    const defaultK = clampTopK(Number.isFinite(cfgTopK) ? cfgTopK : 6);
+    const k = resolveTopKFromQuery(u, defaultK);
     const wantDebug = (u.searchParams.get("debug") || "") === "1";
     const wantCaching = resolveCaching(u, cfg);
     if (!site) { stop(); return json({ ok: false, error: "Missing ?site=" }, { status: 400 }); }
