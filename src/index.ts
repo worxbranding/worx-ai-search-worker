@@ -247,7 +247,7 @@ const INTENT_GUIDANCE: Record<IntentKey, string> = {
     person: `Format your answer as a short paragraph that states the person’s role, highlights, and relationship to other team members when relevant. Include a direct inline link to the person’s page.`,
     service: `Summarize the service in one or two sentences, followed by a concise bullet list of key capabilities or benefits. Link to the service page.`,
     case_study: `Provide a bulleted list of two or three case studies with bold project names, the sector or challenge, and the measurable outcome. Each item should link to the specific case study.`,
-    page_list: `Return a bullet list of relevant pages or sections. Each bullet should use the page title in bold, a short descriptor, and an inline link.`,
+    page_list: `Begin with one concise sentence introducing the list. Provide a Markdown bullet list with up to four items, each exactly in the form "- **[Page Title](https://example.com)**". Finish with the sentence "For more information, visit [Page Title](https://example.com)." using the main page from the context.`,
     how_to: `Outline the recommended steps in a numbered list. Each step should be brief and grounded in the provided content. Link to the source page that details the process.`,
     company_info: `Deliver a confident overview paragraph that highlights WORX positioning and differentiators. Link to the About or Leadership page as appropriate.`,
     contact: `Share the preferred contact method (phone, email, form) in sentence form and link directly to the contact page. Include location details when available.`,
@@ -533,6 +533,56 @@ function parseChildrenMd(childrenMd: unknown): ChildLink[] {
     return links;
 }
 
+function limitChildrenForIntent(children: ChildLink[], intent: IntentKey): ChildLink[] {
+    const limit = intent === "page_list" ? 4 : intent === "case_study" ? 4 : 0;
+    return limit ? children.slice(0, limit) : children;
+}
+
+function stripHtmlTags(input: string): string {
+    return input.replace(/<[^>]+>/g, "");
+}
+
+function ensureMarkdown(answer: string): string {
+    if (typeof answer !== "string" || !answer.trim()) return answer;
+
+    let out = answer;
+    out = out.replace(/\r\n/g, "\n");
+    out = out.replace(/&nbsp;/gi, " ");
+    out = out.replace(/&amp;/gi, "&");
+    out = out.replace(/&lt;/gi, "<");
+    out = out.replace(/&gt;/gi, ">");
+
+    out = out.replace(/<br\s*\/?>/gi, "\n");
+    out = out.replace(/<\/p>\s*<p>/gi, "\n\n");
+    out = out.replace(/<p>/gi, "");
+    out = out.replace(/<\/p>/gi, "\n\n");
+    out = out.replace(/<\/?strong>/gi, "**");
+    out = out.replace(/<\/?b>/gi, "**");
+    out = out.replace(/<\/?em>/gi, "*");
+    out = out.replace(/<\/?i>/gi, "*");
+    out = out.replace(/<li>\s*/gi, "- ");
+    out = out.replace(/<\/li>/gi, "\n");
+    out = out.replace(/<\/?ul>/gi, "\n");
+    out = out.replace(/<\/?ol>/gi, "\n");
+
+    out = out.replace(/<a\s+[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/gi, (_, href: string, text: string) => {
+        const cleanedText = ensureMarkdown(stripHtmlTags(text)).trim() || href.trim();
+        return `[${cleanedText}](${href.trim()})`;
+    });
+
+    out = out.replace(/<h[1-6]>/gi, "\n\n**");
+    out = out.replace(/<\/h[1-6]>/gi, "**\n\n");
+
+    out = out.replace(/<div[^>]*>/gi, "\n");
+    out = out.replace(/<\/div>/gi, "\n");
+    out = out.replace(/<span[^>]*>/gi, "");
+    out = out.replace(/<\/span>/gi, "");
+
+    out = stripHtmlTags(out);
+    out = out.replace(/\n{3,}/g, "\n\n");
+    return out.trim();
+}
+
 // ---- Build enriched document context ----
 function extractSnippet(text: string, keywords: string[], maxChars: number): string | null {
     if (!text) return null;
@@ -579,9 +629,16 @@ async function buildDocContext(
     const collection = md.collection || "";
     const parent = md.parent_title || "";
     const breadcrumbs = Array.isArray(md.breadcrumbs) ? md.breadcrumbs.join(" > ") : (md.breadcrumbs || "");
-    const childrenInput = parsedChildren.length ? parsedChildren : parseChildrenMd(md.children_md);
-    const childLimit = intent === "page_list" ? 8 : intent === "case_study" ? 6 : 0;
-    const children = childLimit ? childrenInput.slice(0, childLimit) : childrenInput;
+    const childrenRaw = parsedChildren.length ? parsedChildren : parseChildrenMd(md.children_md);
+    const baseUrl = url;
+    const childrenFiltered =
+        intent === "page_list" && baseUrl
+            ? childrenRaw.filter((child) => {
+                const childNormalized = child.normalizedUrl || normalizeUrl(child.url);
+                return childNormalized !== baseUrl;
+            })
+            : childrenRaw;
+    const children = limitChildrenForIntent(childrenFiltered, intent);
 
     if (url) {
         parts.push(`**${title}** (${url})`);
@@ -599,7 +656,7 @@ async function buildDocContext(
 
     if (intent === "page_list" && children.length) {
         const formatted = children
-            .map(({ title: childTitle, url: childUrl }) => `- [${childTitle}](${childUrl})`);
+            .map(({ title: childTitle, url: childUrl }) => `- **[${childTitle}](${childUrl})**`);
         if (formatted.length) {
             parts.push(`Pages:\n${formatted.join("\n")}`);
         }
@@ -727,8 +784,10 @@ async function handleAsk(req: Request, env: Env, cfg: SiteConfig, ctx?: Executio
     const selected = matches.slice(0, Math.min(matches.length, maxDocs));
 
     const allowedUrlSet = new Set<string>();
+    const MAX_ALLOWED_URLS = 40;
     const addAllowedUrl = (candidate: unknown) => {
         if (typeof candidate !== "string") return;
+        if (allowedUrlSet.size >= MAX_ALLOWED_URLS) return;
         const trimmed = candidate.trim();
         if (!trimmed) return;
         const normalized = normalizeUrl(trimmed);
@@ -745,9 +804,19 @@ async function handleAsk(req: Request, env: Env, cfg: SiteConfig, ctx?: Executio
             const md = (m.metadata || {}) as any;
             addAllowedUrl(md.url);
             addAllowedUrl(md.canonical);
-            const children = parseChildrenMd(md.children_md);
+            const childrenAll = parseChildrenMd(md.children_md);
+            const baseUrl = normalizeUrl(md.url || md.canonical || "");
+            const childrenFiltered =
+                intentInfo.intent === "page_list" && baseUrl
+                    ? childrenAll.filter((child) => {
+                        const childNormalized = child.normalizedUrl || normalizeUrl(child.url);
+                        return childNormalized !== baseUrl;
+                    })
+                    : childrenAll;
+            const children = limitChildrenForIntent(childrenFiltered, intentInfo.intent);
             for (const child of children) {
                 addAllowedUrl(child.url);
+                if (child.normalizedUrl) addAllowedUrl(child.normalizedUrl);
             }
             const docContext = await buildDocContext(env, md, maxChars, intentInfo.keywords, intentInfo.intent, children);
             return `[#${i + 1}] ${docContext}`;
@@ -788,9 +857,10 @@ ${intentGuide}`.trim();
         try {
             const cachedAns = await env.CONFIG.get<string>(ansKey, "text");
             if (cachedAns && cachedAns.trim()) {
+                const sanitizedCached = ensureMarkdown(cachedAns);
                 log("[cachedAnswer] HIT", ansKey);
                 const nowIso = new Date().toISOString();
-                const noAnswer = isNoAnswer(cachedAns);
+                const noAnswer = isNoAnswer(sanitizedCached);
                 const foundIndex = (Array.isArray(matches) && matches.length > 0) && !noAnswer;
                 const stats = {
                     question: q,
@@ -804,7 +874,7 @@ ${intentGuide}`.trim();
                     temperature,
                     intent: intentInfo.intent,
                 };
-                const bodyOut: any = { ok: true, q, k: resolvedK, answer: cachedAns, stats, intent: intentInfo.intent };
+                const bodyOut: any = { ok: true, q, k: resolvedK, answer: sanitizedCached, stats, intent: intentInfo.intent };
                 if (wantDebug) bodyOut._debug = { matches: matches.slice(0, 3), cache: "hit", intent: intentInfo.intent };
                 const response = json(bodyOut);
                 stop();
@@ -824,7 +894,8 @@ ${intentGuide}`.trim();
         max_output_tokens,
     } as any));
 
-    const answer = (chat as any).response || "I couldn’t locate that information in the current WORX content. Try a different phrasing or explore the site for more context.";
+    const rawAnswer = (chat as any).response || "I couldn’t locate that information in the current WORX content. Try a different phrasing or explore the site for more context.";
+    const answer = ensureMarkdown(rawAnswer);
     const noAnswer = isNoAnswer(answer);
     // Store answer in cache with TTL when KV is writable and caching is enabled
     const ansTtl = Math.max(60, Math.min(86400, Number(cfg.search?.answer_cache_ttl ?? 600)));
