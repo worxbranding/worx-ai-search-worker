@@ -1,6 +1,7 @@
 // WORX AI Search Worker — multi-tenant + API key + CORS + Vectorize v2 (ENRICHED CONTEXT)
 
 import { LOGGING_ENABLED, log, startTimer, time } from "./log";
+import { isNoAnswer } from "./utils/isNoAnswer";
 
 // ---- Type declarations ----
 declare interface VectorizeIndex {
@@ -226,15 +227,6 @@ function normalizeUrl(u: string): string {
     } catch {
         return "";
     }
-}
-
-function isNoAnswer(text: string | null | undefined): boolean {
-    if (!text) return true;
-    const s = String(text).trim().toLowerCase();
-    // Match your fallback phrasing (be forgiving on punctuation)
-    return /couldn['’]?t find an answer/.test(s) || (
-        /^i['’]?m sorry/.test(s) && /couldn['’]?t find/.test(s)
-    );
 }
 
 // ---- Build enriched document context ----
