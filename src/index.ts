@@ -53,6 +53,7 @@ type SiteConfig = {
 };
 
 type SearchMatch = { id: string; score: number; metadata?: Record<string, any> };
+type ChildLink = { title: string; url: string; normalizedUrl: string };
 
 const json = (o: unknown, init: ResponseInit = {}) =>
     new Response(JSON.stringify(o, null, 2), {
@@ -387,7 +388,12 @@ function metadataMatchesKeywords(metadata: Record<string, any> | undefined, inte
 
 function pickMatchesByIntent(matches: SearchMatch[], intent: IntentKey, keywords: string[]): SearchMatch[] {
     if (!matches.length) return matches;
+
     const seen = new Set<string>();
+    const preferredKeyword: SearchMatch[] = [];
+    const preferredOther: SearchMatch[] = [];
+    const tertiaryKeyword: SearchMatch[] = [];
+    const tertiaryOther: SearchMatch[] = [];
     const primary: SearchMatch[] = [];
     const secondary: SearchMatch[] = [];
 
@@ -396,11 +402,56 @@ function pickMatchesByIntent(matches: SearchMatch[], intent: IntentKey, keywords
         if (seen.has(key)) continue;
         seen.add(key);
 
-        if (metadataMatchesKeywords(match.metadata as any, intent, keywords)) {
+        const metadata = (match.metadata || {}) as Record<string, any>;
+        const pageKindRaw = typeof metadata.page_kind === "string" ? metadata.page_kind.toLowerCase() : "";
+        const isIndex = metadata.is_index === true || pageKindRaw === "index";
+        const matchKeyword = metadataMatchesKeywords(metadata, intent, keywords);
+
+        if (intent === "case_study") {
+            if (pageKindRaw === "detail") {
+                (matchKeyword ? preferredKeyword : preferredOther).push(match);
+                continue;
+            }
+            if (isIndex) {
+                (matchKeyword ? tertiaryKeyword : tertiaryOther).push(match);
+                continue;
+            }
+        }
+
+        if (intent === "page_list") {
+            if (isIndex) {
+                (matchKeyword ? preferredKeyword : preferredOther).push(match);
+                continue;
+            }
+        }
+
+        if (matchKeyword) {
             primary.push(match);
         } else {
             secondary.push(match);
         }
+    }
+
+    if (intent === "case_study") {
+        const ordered = [
+            ...preferredKeyword,
+            ...preferredOther,
+            ...tertiaryKeyword,
+            ...tertiaryOther,
+            ...primary,
+            ...secondary,
+        ];
+        return ordered.length ? ordered : matches;
+    }
+
+    if (intent === "page_list") {
+        const ordered = [
+            ...preferredKeyword,
+            ...preferredOther,
+            ...primary,
+            ...secondary,
+        ];
+        return ordered.length ? ordered : matches;
     }
 
     return primary.length ? primary : secondary;
@@ -445,6 +496,43 @@ function normalizeUrl(u: string): string {
     }
 }
 
+function parseChildrenMd(childrenMd: unknown): ChildLink[] {
+    if (typeof childrenMd !== "string" || !childrenMd.trim()) return [];
+
+    const lines = childrenMd.split(/\r?\n/);
+    const links: ChildLink[] = [];
+
+    for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+
+        const withoutPrefix = line.replace(/^#?\s*(\d+[\.\)]?)\s*/, "").trim();
+        if (!withoutPrefix) continue;
+
+        const parts = withoutPrefix.split(/\s+[—-]\s+/);
+        if (parts.length < 2) continue;
+
+        const title = parts[0]?.trim();
+        const urlCandidate = parts.slice(1).join(" — ").trim();
+        if (!title || !urlCandidate) continue;
+
+        const normalized = normalizeUrl(urlCandidate);
+        const exists = links.find((l) => {
+            if (normalized && l.normalizedUrl) return l.normalizedUrl === normalized;
+            return l.url === urlCandidate;
+        });
+        if (exists) continue;
+
+        links.push({
+            title,
+            url: urlCandidate,
+            normalizedUrl: normalized,
+        });
+    }
+
+    return links;
+}
+
 // ---- Build enriched document context ----
 function extractSnippet(text: string, keywords: string[], maxChars: number): string | null {
     if (!text) return null;
@@ -480,17 +568,20 @@ async function buildDocContext(
     md: Record<string, any>,
     maxChars: number = 2000,
     keywords: string[] = [],
-    intent: IntentKey = INTENT_DEFAULT
+    intent: IntentKey = INTENT_DEFAULT,
+    parsedChildren: ChildLink[] = []
 ): Promise<string> {
     const parts: string[] = [];
 
     const url = md.url ? normalizeUrl(md.url) : "";
     const title = md.title || "Untitled";
     const preview = md.preview || "";
-    const children = md.children_md || "";
     const collection = md.collection || "";
     const parent = md.parent_title || "";
     const breadcrumbs = Array.isArray(md.breadcrumbs) ? md.breadcrumbs.join(" > ") : (md.breadcrumbs || "");
+    const childrenInput = parsedChildren.length ? parsedChildren : parseChildrenMd(md.children_md);
+    const childLimit = intent === "page_list" ? 8 : intent === "case_study" ? 6 : 0;
+    const children = childLimit ? childrenInput.slice(0, childLimit) : childrenInput;
 
     if (url) {
         parts.push(`**${title}** (${url})`);
@@ -506,9 +597,19 @@ async function buildDocContext(
         parts.push(`Summary: ${preview}`);
     }
 
-    if (intent === "page_list" && children) {
-        const trimmedChildren = children.length > maxChars ? `${children.slice(0, maxChars)}…` : children;
-        parts.push(`Pages:\n${trimmedChildren}`);
+    if (intent === "page_list" && children.length) {
+        const formatted = children
+            .map(({ title: childTitle, url: childUrl }) => `- [${childTitle}](${childUrl})`);
+        if (formatted.length) {
+            parts.push(`Pages:\n${formatted.join("\n")}`);
+        }
+    }
+    if (intent === "case_study" && children.length) {
+        const formatted = children
+            .map(({ title: childTitle, url: childUrl }) => `- [${childTitle}](${childUrl})`);
+        if (formatted.length) {
+            parts.push(`Case Studies:\n${formatted.join("\n")}`);
+        }
     }
 
     const kvKey = md.doc_key;
@@ -625,17 +726,36 @@ async function handleAsk(req: Request, env: Env, cfg: SiteConfig, ctx?: Executio
     const maxChars = Math.max(200, Math.min(4000, Number(cfg.search?.max_kv_text_chars ?? 2000)));
     const selected = matches.slice(0, Math.min(matches.length, maxDocs));
 
+    const allowedUrlSet = new Set<string>();
+    const addAllowedUrl = (candidate: unknown) => {
+        if (typeof candidate !== "string") return;
+        const trimmed = candidate.trim();
+        if (!trimmed) return;
+        const normalized = normalizeUrl(trimmed);
+        if (normalized) {
+            allowedUrlSet.add(normalized);
+        } else {
+            allowedUrlSet.add(trimmed);
+        }
+    };
+
     const docStop = startTimer("buildDocContext(filtered)");
     const contexts = await Promise.all(
         selected.map(async (m, i) => {
             const md = (m.metadata || {}) as any;
-            const docContext = await buildDocContext(env, md, maxChars, intentInfo.keywords, intentInfo.intent);
+            addAllowedUrl(md.url);
+            addAllowedUrl(md.canonical);
+            const children = parseChildrenMd(md.children_md);
+            for (const child of children) {
+                addAllowedUrl(child.url);
+            }
+            const docContext = await buildDocContext(env, md, maxChars, intentInfo.keywords, intentInfo.intent, children);
             return `[#${i + 1}] ${docContext}`;
         })
     );
     docStop();
 
-    const allowedUrls = Array.from(new Set(selected.map((m) => normalizeUrl((m.metadata as any)?.url || "")).filter(Boolean)));
+    const allowedUrls = Array.from(allowedUrlSet);
     const linkHints = ["Use only these URLs when linking:", ...allowedUrls.map((u) => `- ${u}`)].join("\n");
 
     const basePrompt = (promptOverride !== "" ? promptOverride : configPrompt).trim();
