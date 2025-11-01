@@ -165,7 +165,7 @@ export function metadataMatchesKeywords(
 }
 
 /**
- * Re-rank matches according to the detected intent so the chat context starts
+ * Re rank matches, according to the detected intent, so the chat context starts
  * from the most relevant documents.
  */
 export function pickMatchesByIntent(

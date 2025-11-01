@@ -25,7 +25,7 @@ export function parseChildrenMd(childrenMd: unknown): ChildLink[] {
     const line = rawLine.trim();
     if (!line) continue;
 
-    const withoutPrefix = line.replace(/^#?\s*(\d+[\.)]?)\s*/, "").trim();
+	const withoutPrefix = line.replace(/^#?\s*(\d+[.)]?)\s*/, "").trim();
     if (!withoutPrefix) continue;
 
     const parts = withoutPrefix.split(/\s+[—-]\s+/);
@@ -58,13 +58,13 @@ export function limitChildrenForIntent(children: ChildLink[], intent: IntentKey)
   return children.slice(0, limit);
 }
 
-/** Coarse HTML stripper used by markdown conversion. */
+/** Coarse HTML stripper used by Markdown conversion. */
 export function stripHtmlTags(input: string): string {
   if (!input) return "";
   return input.replace(/<[^>]+>/g, "");
 }
 
-/** Convert HTML-ish model output into simple markdown for the CMS. */
+/** Convert HTML-ish model output into simple Markdown for the CMS. */
 export function ensureMarkdown(answer: string): string {
   if (!answer) return "";
   let out = answer;
@@ -99,7 +99,7 @@ export function extractSnippet(text: string, keywords: string[], maxChars: numbe
   if (!text) return null;
   const cleaned = text.replace(/\s+/g, " ").trim();
   if (!cleaned) return null;
-  const sentences = cleaned.split(/(?<=[\.!\?])\s+/);
+	const sentences = cleaned.split(/(?<=[.!?])\s+/);
   const normalizedKeywords = keywords.map(normalizeForCompare).filter(Boolean);
 
   const chosen: string[] = [];

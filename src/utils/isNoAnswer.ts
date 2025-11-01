@@ -11,7 +11,7 @@ function normalizeFallback(text: string): string {
     return text
         .trim()
         .replace(/\s+/g, " ")
-        .replace(/[’]/g, "'")
+		.replace(/’/g, "'")
         .toLowerCase();
 }
 

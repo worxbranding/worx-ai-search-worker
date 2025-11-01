@@ -7,14 +7,33 @@ export function sitePrefixedId(site: string, id: string): string {
   return id.startsWith(`${site}:`) ? id : `${site}:${id}`;
 }
 
-/** Remove matches that clearly belong to other tenants. */
-export function filterToSite(site: string, matches: SearchMatch[]): SearchMatch[] {
-  return (matches || []).filter((match) => {
-    if (!match) return false;
-    if (match.id?.startsWith(`${site}:`)) return true;
+function coerceMatch(raw: unknown): SearchMatch | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const id = typeof obj.id === "string" ? obj.id : null;
+  if (!id) return null;
+  const score = typeof obj.score === "number" && Number.isFinite(obj.score) ? obj.score : 0;
+  const metadata =
+    obj.metadata && typeof obj.metadata === "object" ? (obj.metadata as Record<string, unknown>) : undefined;
+  return { id, score, metadata };
+}
+
+/** Remove matches that clearly belong to other tenants and coerce the payload shape. */
+export function filterToSite(site: string, matches: unknown[]): SearchMatch[] {
+  const filtered: SearchMatch[] = [];
+  for (const raw of matches || []) {
+    const match = coerceMatch(raw);
+    if (!match) continue;
+    if (match.id.startsWith(`${site}:`)) {
+      filtered.push(match);
+      continue;
+    }
     const siteMeta = (match.metadata as any)?.site;
-    return siteMeta === site;
-  });
+    if (siteMeta === site) {
+      filtered.push(match);
+    }
+  }
+  return filtered;
 }
 
 /**

@@ -36,7 +36,7 @@ export interface KVNamespace {
   }>;
 }
 
-/** Environment binding bag passed to the Worker entrypoint. */
+/** Environment-binding bag passed to the Worker entrypoint. */
 export interface Env {
   VECTORIZE: VectorizeIndex;
   AI: Ai;
@@ -72,7 +72,7 @@ export type SearchMatch = {
   metadata?: Record<string, unknown>;
 };
 
-/** Parsed child link from the markdown stored alongside documents. */
+/** Parsed child link from the Markdown stored alongside documents. */
 export type ChildLink = {
   title: string;
   url: string;

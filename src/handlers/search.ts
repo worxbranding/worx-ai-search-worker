@@ -6,7 +6,7 @@ import { detectIntent } from "../search/intent";
 import type { Env, ExecutionContext, SearchMatch, SiteConfig } from "../lib/types";
 
 /**
- * Vector search endpoint. It reuses the cached embedding logic so `/search`
+ * Vector search endpoint. It reuses the cached embedding logic, so `/search`
  * benefits from KV caching when enabled.
  */
 export async function handleSearch(

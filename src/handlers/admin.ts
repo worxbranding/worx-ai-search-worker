@@ -1,6 +1,6 @@
 import { json } from "../http/response";
 import { log, startTimer, time } from "../lib/logging";
-import type { Env, ExecutionContext, KVNamespace, SiteConfig } from "../lib/types";
+import type { Env, ExecutionContext, KVNamespace } from "../lib/types";
 
 /**
  * Delete all KV keys that share the provided prefix. When waitUntil is
@@ -37,10 +37,9 @@ async function kvDeleteByPrefix(
 
 /** Admin endpoint to clear cached answers and embeddings. */
 export async function handleClearCache(
-  req: Request,
-  env: Env,
-  cfg: SiteConfig,
-  ctx?: ExecutionContext
+	req: Request,
+	env: Env,
+	ctx?: ExecutionContext
 ): Promise<Response> {
   const stop = startTimer("handleClearCache");
   const url = new URL(req.url);

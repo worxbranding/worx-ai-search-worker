@@ -39,7 +39,7 @@ export async function handleDebugEmbed(
 }
 
 /**
- * Provide a robust Vectorize ID lookup that tries multiple id shapes, and
+ * Provide a robust Vectorize ID lookup that tries multiple id shapes and
  * falls back to embedding the KV content when necessary.
  */
 export async function handleDebugQueryById(
@@ -67,10 +67,10 @@ export async function handleDebugQueryById(
     return json({ ok: false, error: "Missing ?id" }, { status: 400 });
   }
 
-  const prefixed = sitePrefixedId(site, idRaw);
-  const stripped = idRaw.startsWith(`${site}:`) ? idRaw.slice(site.length + 1) : null;
+	const prefixed = sitePrefixedId(site, idRaw);
+	const stripped = idRaw.startsWith(`${site}:`) ? idRaw.slice(site.length + 1) : null;
 
-  let candidateIds: string[] = [];
+	let candidateIds: string[];
   if (useRaw) {
     candidateIds = [idRaw];
   } else if (forceDoc) {
@@ -174,9 +174,8 @@ export async function handleDebugQueryById(
 
 /** List the doc:* ids stored in KV so operators can inspect ingest output. */
 export async function handleDebugListIds(
-  req: Request,
-  env: Env,
-  cfg: SiteConfig
+	req: Request,
+	env: Env
 ): Promise<Response> {
   const stop = startTimer("handleDebugListIds");
   const url = new URL(req.url);

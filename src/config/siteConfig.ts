@@ -66,7 +66,7 @@ export function clampTopK(value: number, min = 1, max = 24): number {
 }
 
 /**
- * Read the topK request value from several alternate query string names, and
+ * Read the topK request value from several alternate query string names and
  * fall back to the provided configuration default when it is missing.
  */
 export function resolveTopKFromQuery(url: URL, fallback: number): number {

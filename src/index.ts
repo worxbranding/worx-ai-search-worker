@@ -16,7 +16,7 @@ import {
 } from "./handlers/debug";
 import type { Env, ExecutionContext, SiteConfig } from "./lib/types";
 
-/** Entry point: routes incoming Worker requests to the modularised handlers. */
+/** Entry point: routes incoming Worker requests to the modularized handlers. */
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
@@ -61,18 +61,18 @@ export default {
       if (req.method === "POST" && pathname === "/ask") {
         return withCors(originAllow, await time("route:/ask", () => handleAsk(req, env, cfg!, ctx)));
       }
-      if (req.method === "POST" && pathname === "/admin/clear-cache") {
-        return withCors(
-          originAllow,
-          await time("route:/admin/clear-cache", () => handleClearCache(req, env, cfg!, ctx))
-        );
-      }
-      if (req.method === "GET" && pathname === "/admin/clear-cache") {
-        return withCors(
-          originAllow,
-          await time("route:/admin/clear-cache", () => handleClearCache(req, env, cfg!, ctx))
-        );
-      }
+		if (req.method === "POST" && pathname === "/admin/clear-cache") {
+			return withCors(
+				originAllow,
+				await time("route:/admin/clear-cache", () => handleClearCache(req, env, ctx))
+			);
+		}
+		if (req.method === "GET" && pathname === "/admin/clear-cache") {
+			return withCors(
+				originAllow,
+				await time("route:/admin/clear-cache", () => handleClearCache(req, env, ctx))
+			);
+		}
       if (req.method === "GET" && pathname === "/debug/embed") {
         return withCors(originAllow, await time("route:/debug/embed", () => handleDebugEmbed(req, env, cfg!)));
       }
@@ -82,12 +82,12 @@ export default {
           await time("route:/debug/query-by-id", () => handleDebugQueryById(req, env, cfg!))
         );
       }
-      if (req.method === "GET" && pathname === "/debug/list-ids") {
-        return withCors(
-          originAllow,
-          await time("route:/debug/list-ids", () => handleDebugListIds(req, env, cfg!))
-        );
-      }
+		if (req.method === "GET" && pathname === "/debug/list-ids") {
+			return withCors(
+				originAllow,
+				await time("route:/debug/list-ids", () => handleDebugListIds(req, env))
+			);
+		}
 
       return withCors(originAllow, new Response("Not found", { status: 404 }));
     } catch (error: any) {
