@@ -1,0 +1,29 @@
+# Editor settings
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Package managers
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# Wrangler / dev runtime artifacts
+.wrangler/
+.mf/
+.tmp/
+
+# Build output
+dist/
+dist-tests/
+*.tsbuildinfo
+
+# Logs & misc
+npm-debug.log*
+yarn-error.log*
+
+# Environment files
+.env
+.env.*
