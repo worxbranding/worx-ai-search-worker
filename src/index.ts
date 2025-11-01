@@ -1224,14 +1224,17 @@ export default {
         }
 
         try {
+            if (!cfg) {
+                return withCors(originAllow, json({ ok: false, error: "Missing or invalid site" }, { status: 400 }));
+            }
+
+            const auth = await requireApiKey(req, cfg);
+            if (auth) return withCors(originAllow, auth);
+
             if (req.method === "GET" && pathname === "/status") {
                 const res = await time("route:/status", () => handleStatus(req, env));
                 return withCors(originAllow, res);
             }
-
-            if (!cfg) return withCors(originAllow, json({ ok: false, error: "Missing or invalid site" }, { status: 400 }));
-            const auth = await requireApiKey(req, cfg);
-            if (auth) return withCors(originAllow, auth);
 
             if (req.method === "GET" && pathname === "/search") return withCors(originAllow, await time("route:/search", () => handleSearch(req, env, cfg!, ctx)));
             if (req.method === "POST" && pathname === "/ask") return withCors(originAllow, await time("route:/ask", () => handleAsk(req, env, cfg!, ctx)));
