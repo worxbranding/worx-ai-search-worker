@@ -30,6 +30,7 @@ export interface TrainingDocumentMatch {
 
 /** Shape of the payload sent to Concrete CMS for training session logging. */
 export interface TrainingSessionLogPayload {
+  uid?: string;
   site: string;
   question: string;
   answer: string;

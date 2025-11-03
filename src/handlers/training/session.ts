@@ -17,6 +17,11 @@ export async function handleTrainingSession(
   cfg: SiteConfig,
   ctx?: ExecutionContext
 ): Promise<Response> {
+  const sessionUid = typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID().replace(/-/g, "")
+    : Array.from(crypto.getRandomValues(new Uint8Array(16)))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
   const stop = startTimer("handleTrainingSession");
   const body = (await req.json().catch(() => ({}))) as TrainingSessionRequest & {
     promptOverride?: string;
@@ -118,6 +123,7 @@ export async function handleTrainingSession(
 
   const statsRecord: Record<string, unknown> = { ...result.stats };
   const logPayload: TrainingSessionLogPayload = {
+    uid: sessionUid,
     site,
     question: result.question,
     answer: result.answer,
@@ -143,6 +149,7 @@ export async function handleTrainingSession(
 
   const responsePayload: Record<string, unknown> = {
     ok: true,
+    sessionId: sessionUid,
     question: result.question,
     answer: result.answer,
     stats: result.stats,
