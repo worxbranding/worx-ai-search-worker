@@ -94,7 +94,7 @@ What is cached when ON:
 
 
 ## Endpoints
-All routes are relative to your worker domain, e.g., `https://worx-search.worxbranding.workers.dev`.
+All routes are relative to your worker domain, e.g., `https://search-worker.worxbranding.com`.
 
 General requirements:
 - Include `?site=<site>` on all protected endpoints so the worker can load the site config.

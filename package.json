@@ -6,7 +6,7 @@
     "dev": "wrangler dev --remote",
     "deploy": "wrangler  deploy",
     "monitor": "wrangler tail worx-search",
-    "clear-cache": "curl -s \"https://worx-search.worxbranding.workers.dev/admin/clear-cache?site=worxbranding-dev\" \\\n  -H \"x-api-key: dev-secret-123\" | jq .",
+    "clear-cache": "curl -s \"https://search-worker.worxbranding.com/admin/clear-cache?site=worxbranding-dev\" \\\n  -H \"x-api-key: dev-secret-123\" | jq .",
     "test": "rm -rf dist-tests && ./node_modules/.bin/tsc --module commonjs --target es2020 --types node --skipLibCheck --outDir dist-tests test/*.test.ts && for file in dist-tests/test/*.test.js; do node \"$file\"; done && rm -rf dist-tests",
     "test:isNoAnswer": "npm run test"
   },
