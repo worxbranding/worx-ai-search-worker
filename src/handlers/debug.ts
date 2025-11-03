@@ -9,6 +9,7 @@ import {
   vectorizeQueryById,
 } from "../search/vectorize";
 import type { Env, SiteConfig } from "../lib/types";
+import { getPolicySnapshot, getReRankWeights, pickPromptVariant } from "../training/policyCache";
 
 /** Quick endpoint to inspect raw embeddings generated for a prompt. */
 export async function handleDebugEmbed(
@@ -241,4 +242,55 @@ export async function handleDebugListIds(
 
   stop();
   return json(body);
+}
+
+/** Emit the active training policy snapshot for quick inspection. */
+export async function handleDebugTrainingPolicy(
+  req: Request,
+  env: Env,
+  cfg: SiteConfig
+): Promise<Response> {
+  const stop = startTimer("handleDebugTrainingPolicy");
+  const url = new URL(req.url);
+  const site = (url.searchParams.get("site") || cfg.site_key || "").trim();
+  if (!site) {
+    stop();
+    return json({ ok: false, error: "Missing ?site=" }, { status: 400 });
+  }
+
+  const force = ["1", "true", "yes"].includes((url.searchParams.get("force") || "").trim().toLowerCase());
+  const variantCandidate = (url.searchParams.get("variant") || "").trim() || null;
+  const includeSnapshot = ["1", "true", "yes"].includes((url.searchParams.get("full") || "").trim().toLowerCase());
+
+  try {
+    const snapshot = await getPolicySnapshot(env, cfg, site, force ? { forceRefresh: true } : {});
+    const promptVariant = pickPromptVariant(snapshot, variantCandidate);
+    const weights = getReRankWeights(cfg, snapshot);
+
+    const body: Record<string, unknown> = {
+      ok: true,
+      site,
+      cache: force ? "refreshed" : "cached",
+      policyVersion: snapshot?.version ?? null,
+      publishedAt: snapshot?.publishedAt ?? null,
+      promptVariant: promptVariant
+        ? {
+            key: promptVariant.key,
+            description: promptVariant.description ?? null,
+            hasSystemPrompt: !!promptVariant.systemPrompt,
+          }
+        : null,
+      promptVariants: snapshot?.prompts?.variants ? Object.keys(snapshot.prompts.variants) : [],
+      weights,
+      guardrails: snapshot?.guardrails?.riskRules ?? null,
+    };
+    if (includeSnapshot) {
+      body.snapshot = snapshot;
+    }
+    stop();
+    return json(body);
+  } catch (error) {
+    stop();
+    return json({ ok: false, site, error: String((error as Error)?.message || error) }, { status: 500 });
+  }
 }

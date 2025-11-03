@@ -13,6 +13,7 @@ import {
   handleDebugEmbed,
   handleDebugListIds,
   handleDebugQueryById,
+  handleDebugTrainingPolicy,
 } from "./handlers/debug";
 import { handleTrainingSession } from "./handlers/training/session";
 import { handleTrainingFeedback } from "./handlers/training/feedback";
@@ -109,6 +110,12 @@ export default {
 				await time("route:/debug/list-ids", () => handleDebugListIds(req, env))
 			);
 		}
+      if (req.method === "GET" && pathname === "/debug/training-policy") {
+        return withCors(
+          originAllow,
+          await time("route:/debug/training-policy", () => handleDebugTrainingPolicy(req, env, cfg!))
+        );
+      }
 
       return withCors(originAllow, new Response("Not found", { status: 404 }));
     } catch (error: any) {
