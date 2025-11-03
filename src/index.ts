@@ -14,6 +14,9 @@ import {
   handleDebugListIds,
   handleDebugQueryById,
 } from "./handlers/debug";
+import { handleTrainingSession } from "./handlers/training/session";
+import { handleTrainingFeedback } from "./handlers/training/feedback";
+import { handleTrainingPublish } from "./handlers/training/publish";
 import type { Env, ExecutionContext, SiteConfig } from "./lib/types";
 
 /** Entry point: routes incoming Worker requests to the modularized handlers. */
@@ -60,6 +63,24 @@ export default {
       }
       if (req.method === "POST" && pathname === "/ask") {
         return withCors(originAllow, await time("route:/ask", () => handleAsk(req, env, cfg!, ctx)));
+      }
+      if (req.method === "POST" && pathname === "/training/session") {
+        return withCors(
+          originAllow,
+          await time("route:/training/session", () => handleTrainingSession(req, env, cfg!, ctx))
+        );
+      }
+      if (req.method === "POST" && pathname === "/training/feedback") {
+        return withCors(
+          originAllow,
+          await time("route:/training/feedback", () => handleTrainingFeedback(req, env, cfg!, ctx))
+        );
+      }
+      if (req.method === "POST" && pathname === "/training/publish") {
+        return withCors(
+          originAllow,
+          await time("route:/training/publish", () => handleTrainingPublish(req, env, cfg!, ctx))
+        );
       }
 		if (req.method === "POST" && pathname === "/admin/clear-cache") {
 			return withCors(

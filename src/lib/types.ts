@@ -41,8 +41,37 @@ export interface Env {
   VECTORIZE: VectorizeIndex;
   AI: Ai;
   CONFIG: KVNamespace;
+  TRAINING_CACHE?: KVNamespace;
   ALLOWED_ORIGINS?: string;
 }
+
+/** Training-related configuration surfaced through the site config document. */
+export type TrainingConfig = {
+  enabled?: boolean;
+  apiBase?: string;
+  apiKey?: string;
+  sessionEndpoint?: string;
+  feedbackEndpoint?: string;
+  publishEndpoint?: string;
+  replayEndpoint?: string;
+  policy?: {
+    activeKey?: string;
+    keyPrefix?: string;
+    cacheTtlSeconds?: number;
+    defaultPromptVariant?: string;
+    weights?: Record<string, number>;
+    metadata?: Record<string, unknown>;
+  };
+  logger?: {
+    enabled?: boolean;
+    endpoint?: string;
+    headers?: Record<string, string>;
+    cacheKeyPrefix?: string;
+    ttlSeconds?: number;
+    timeoutMs?: number;
+  };
+  [key: string]: unknown;
+};
 
 /** Per-site configuration retrieved from KV. */
 export type SiteConfig = {
@@ -63,6 +92,7 @@ export type SiteConfig = {
     answer_cache_ttl?: number;
     caching?: boolean;
   };
+  training?: TrainingConfig;
 };
 
 /** Vector search match structure returned by Vectorize. */

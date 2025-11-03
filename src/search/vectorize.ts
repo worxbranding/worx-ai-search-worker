@@ -149,3 +149,34 @@ export async function cachedEmbed(
 
   return embedding;
 }
+
+/** Reorder matches according to weight-based scoring rules. */
+export function reRankMatches(matches: SearchMatch[], weights?: Record<string, number>): SearchMatch[] {
+  if (!weights || !Object.keys(weights).length) return matches;
+  const baseWeight = Number(weights["base"] ?? weights["score"] ?? 1);
+  if (!Number.isFinite(baseWeight) || baseWeight === 0) {
+    return matches;
+  }
+
+  const scored = matches.map((match) => {
+    const metadata = (match.metadata || {}) as Record<string, unknown>;
+    let extra = 0;
+    for (const [key, weightRaw] of Object.entries(weights)) {
+      if (key === "base" || key === "score") continue;
+      const weight = Number(weightRaw);
+      if (!Number.isFinite(weight) || weight === 0) continue;
+      const value = metadata[key];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        extra += value * weight;
+      } else if (typeof value === "string") {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) extra += parsed * weight;
+      }
+    }
+    const totalScore = match.score * baseWeight + extra;
+    return { match, totalScore };
+  });
+
+  scored.sort((a, b) => b.totalScore - a.totalScore);
+  return scored.map((item) => item.match);
+}
