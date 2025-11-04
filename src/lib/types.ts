@@ -54,6 +54,10 @@ export type TrainingConfig = {
   feedbackEndpoint?: string;
   publishEndpoint?: string;
   replayEndpoint?: string;
+  basicAuth?: {
+    user?: string;
+    pass?: string;
+  };
   policy?: {
     activeKey?: string;
     keyPrefix?: string;

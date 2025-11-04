@@ -28,9 +28,13 @@ export async function handleTrainingFeedback(
     metadata?: Record<string, unknown>;
   };
 
-  const site = parseString(body.site);
-  const sessionId = parseString(body.sessionId || body.session_id);
-  const vote = parseVote(body.vote);
+  const url = new URL(req.url);
+  let site = parseString(body.site);
+  if (!site) site = parseString(url.searchParams.get("site"));
+  let sessionId = parseString(body.sessionId || body.session_id);
+  if (!sessionId) sessionId = parseString(url.searchParams.get("sessionId") || url.searchParams.get("session_id"));
+  let vote = parseVote(body.vote);
+  if (!vote) vote = parseVote(url.searchParams.get("vote"));
   if (!site || !sessionId || !vote) {
     stop();
     return json(
@@ -59,7 +63,7 @@ export async function handleTrainingFeedback(
   }
 
   try {
-    const result = await forwardTrainingRequest(cfg, "feedback", "/api/training/feedback", forwardPayload);
+    const result = await forwardTrainingRequest(cfg, "feedback", "api/training/feedback", forwardPayload);
     if (!result) {
       stop();
       return json({ ok: false, error: "Training feedback endpoint not configured" }, { status: 501 });

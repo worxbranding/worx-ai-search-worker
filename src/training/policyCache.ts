@@ -14,18 +14,39 @@ type PolicyCacheEntry = {
 const POLICY_CACHE = new Map<string, PolicyCacheEntry>();
 const DEFAULT_CACHE_TTL_MS = 60_000;
 
+function replaceSitePlaceholder(value: string, site: string): string {
+  return value.replace(/{site}/gi, site);
+}
+
+function appendSegment(key: string, segment: string): string {
+  const trimmedSegment = segment.trim();
+  if (!trimmedSegment) return key;
+  const parts = key.split(":").map((part) => part.trim()).filter(Boolean);
+  if (parts.includes(trimmedSegment)) {
+    return key;
+  }
+  if (!key || key.endsWith(":")) {
+    return `${key}${trimmedSegment}`;
+  }
+  return `${key}:${trimmedSegment}`;
+}
+
 function resolvePolicyKey(site: string, cfg: SiteConfig): string {
   const policyCfg = (cfg.training?.policy || {}) as Record<string, unknown>;
-  const activeKeyRaw = typeof policyCfg["activeKey"] === "string" ? (policyCfg["activeKey"] as string) : "";
-  if (activeKeyRaw.trim()) {
-    return activeKeyRaw.replace(/{site}/gi, site);
+  const activeKeyRaw = typeof policyCfg["activeKey"] === "string" ? policyCfg["activeKey"].trim() : "";
+  if (activeKeyRaw) {
+    const substituted = replaceSitePlaceholder(activeKeyRaw, site);
+    return substituted || `policy:${site}:active`;
   }
-  const keyPrefixRaw = typeof policyCfg["keyPrefix"] === "string" ? (policyCfg["keyPrefix"] as string) : "";
-  const prefix = keyPrefixRaw.trim() || "policy:";
-  let key = `${prefix}${site}`;
-  if (!key.includes(":active")) {
-    key = key.endsWith(":") ? `${key}active` : `${key}:active`;
+  const keyPrefixRaw = typeof policyCfg["keyPrefix"] === "string" ? policyCfg["keyPrefix"] : "";
+  let key = (keyPrefixRaw || "").trim();
+  if (!key) {
+    key = `policy:${site}`;
+  } else {
+    key = replaceSitePlaceholder(key, site);
+    key = appendSegment(key, site);
   }
+  key = appendSegment(key, "active");
   return key;
 }
 

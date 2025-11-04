@@ -38,11 +38,16 @@ export function resolveTrainingEndpoint(
   const apiBaseRaw = typeof training.apiBase === "string" ? training.apiBase : "";
   if (!apiBaseRaw || !apiBaseRaw.trim()) return null;
   try {
-    const base = new URL(apiBaseRaw.trim());
-    const normalizedPath = fallbackPath.startsWith("/") ? fallbackPath : `/${fallbackPath}`;
-    const basePath = base.pathname.replace(/\/?$/, "");
-    base.pathname = `${basePath}${normalizedPath}`;
-    return base.toString();
+    const baseString = apiBaseRaw.trim().endsWith("/")
+      ? apiBaseRaw.trim()
+      : `${apiBaseRaw.trim()}/`;
+    const baseUrl = new URL(baseString);
+    const normalized = (fallbackPath || "").trim();
+    if (!normalized) {
+      return baseUrl.toString();
+    }
+    const resolved = new URL(normalized, baseUrl);
+    return resolved.toString();
   } catch {
     return null;
   }
@@ -78,6 +83,18 @@ export function resolveTrainingHeaders(
   const apiKey = typeof training.apiKey === "string" ? training.apiKey.trim() : "";
   if (apiKey) {
     headers["x-api-key"] = apiKey;
+  }
+
+  const basicAuth = (training as any).basicAuth as { user?: string; pass?: string } | undefined;
+  if (basicAuth && basicAuth.user && basicAuth.pass) {
+    headers["Authorization"] = "Basic " + btoa(`${basicAuth.user}:${basicAuth.pass}`);
+  } else {
+    const devBasic = (cfg as any).dev_basic_auth as
+      | { enabled?: boolean; user?: string; pass?: string }
+      | undefined;
+    if (devBasic && devBasic.enabled && devBasic.user && devBasic.pass) {
+      headers["Authorization"] = "Basic " + btoa(`${devBasic.user}:${devBasic.pass}`);
+    }
   }
 
   if (overrides) {

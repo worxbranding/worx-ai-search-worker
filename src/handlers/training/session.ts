@@ -33,8 +33,17 @@ export async function handleTrainingSession(
     disableCaching?: boolean;
   };
 
-  const site = (body.site || "").trim();
-  const question = (body.q || "").trim();
+  const url = new URL(req.url);
+  let site = (body.site || "").trim();
+  if (!site) {
+    const qsSite = url.searchParams.get("site");
+    if (qsSite) site = qsSite.trim();
+  }
+  let question = (body.q || "").trim();
+  if (!question) {
+    const qsQuestion = url.searchParams.get("q");
+    if (qsQuestion) question = qsQuestion.trim();
+  }
   if (!site) {
     stop();
     return json({ ok: false, error: "Missing field 'site'" }, { status: 400 });

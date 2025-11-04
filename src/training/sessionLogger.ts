@@ -67,8 +67,12 @@ async function dispatchToEndpoint(
       signal: controller.signal,
     });
     if (!res.ok) {
-      log("[sessionLogger] upstream non-2xx", endpoint, `status=${res.status}`);
+      const body = await res.text().catch(() => '');
+      log("[sessionLogger] upstream non-2xx", endpoint, `status=${res.status}`, body.slice(0, 200));
+      return;
     }
+    const body = await res.text().catch(() => '');
+    log("[sessionLogger] upstream success", endpoint, body.slice(0, 200));
   } catch (error) {
     log("[sessionLogger] upstream error", endpoint, String((error as Error)?.message || error));
   } finally {
@@ -83,14 +87,16 @@ export async function logTrainingSession(
   ctx?: ExecutionContext
 ): Promise<void> {
   await persistToCache(env, cfg, payload, ctx);
+  log("[sessionLogger] payload", JSON.stringify(payload).slice(0, 500));
 
-  const endpoint = resolveTrainingEndpoint(cfg, "session", "/api/training/session-log");
+  const endpoint = resolveTrainingEndpoint(cfg, "session", "api/training/session-log");
   if (!endpoint) {
     log("[sessionLogger] skip: endpoint not configured");
     return;
   }
 
   const headers = resolveTrainingHeaders(cfg, "session");
+  log("[sessionLogger] resolved endpoint", endpoint, JSON.stringify(headers));
   const timeoutMs = resolveTrainingTimeoutMs(cfg, "session");
 
   const send = async () => {

@@ -23,7 +23,7 @@ export async function handleTrainingPublish(
 
   const forwardPayload: Record<string, unknown> = { ...body, site };
   try {
-    const result = await forwardTrainingRequest(cfg, "publish", "/api/training/publish", forwardPayload);
+    const result = await forwardTrainingRequest(cfg, "publish", "api/training/publish", forwardPayload);
     if (!result) {
       stop();
       return json({ ok: false, error: "Training publish endpoint not configured" }, { status: 501 });
