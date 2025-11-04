@@ -41,6 +41,11 @@ export interface AskExecutionInput {
   training: boolean;
   promptVariant?: string | null;
   disableCaching?: boolean;
+  retryContext?: {
+    previous_answer?: string;
+    feedback?: string;
+    instruction?: string;
+  } | null;
 }
 
 interface AskStats {
@@ -218,13 +223,40 @@ export async function executeAsk(
   const variantPrompt = promptVariant?.systemPrompt?.trim();
   const basePrompt = (input.promptOverride || "").trim() || variantPrompt || configPrompt;
   const intentGuide = (INTENT_GUIDANCE[intentInfo.intent] || INTENT_GUIDANCE.default).trim();
-  const system = `${basePrompt}
+
+  // Extract approved examples from policy (few-shot learning)
+  const examples = policySnapshot?.prompts?.examples || [];
+  const examplesText =
+    examples.length > 0
+      ? "\n\nHere are examples of correct answers:\n\n" +
+        examples
+          .map((ex: any) => `Q: ${ex.question}\nA: ${ex.answer}`)
+          .join("\n\n")
+      : "";
+
+  // Extract guardrail rules from policy
+  const guardrails = policySnapshot?.prompts?.guardrails || [];
+  const guardrailsText =
+    guardrails.length > 0
+      ? "\n\nIMPORTANT GUIDELINES:\n" +
+        guardrails.map((rule: string, i: number) => `${i + 1}. ${rule}`).join("\n")
+      : "";
+
+  // Add retry context if this is a retry attempt
+  const retryContextText = input.retryContext
+    ? `\n\nPREVIOUS ATTEMPT FEEDBACK:
+Your previous answer: "${input.retryContext.previous_answer || 'N/A'}"
+Feedback: ${input.retryContext.feedback || 'N/A'}
+${input.retryContext.instruction || 'Please try again and correct the mistake.'}`
+    : "";
+
+  let system = `${basePrompt}
 
 Link Guidance:
 ${linkHints}
 
 Intent focus: ${intentInfo.intent}
-${intentGuide}`.trim();
+${intentGuide}${retryContextText}${examplesText}${guardrailsText}`.trim();
 
   const user = `Question: ${input.question}\n\nContext:\n${contexts.join("\n\n")}`;
   const chatModel = cfg.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
@@ -484,6 +516,16 @@ export async function handleAsk(
     disableCaching = true;
   }
 
+  // Extract retry context for iterative training
+  const retryContext =
+    body.retry_context && typeof body.retry_context === "object"
+      ? {
+          previous_answer: body.retry_context.previous_answer,
+          feedback: body.retry_context.feedback,
+          instruction: body.retry_context.instruction,
+        }
+      : null;
+
   const result = await executeAsk(
     env,
     cfg,
@@ -497,6 +539,7 @@ export async function handleAsk(
       training: trainingFlag,
       promptVariant,
       disableCaching,
+      retryContext,
     },
     ctx
   );
