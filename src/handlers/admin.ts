@@ -47,7 +47,7 @@ export async function handleClearCache(
   const body = (await req.json().catch(() => ({}))) as { scope?: string };
   const scope = String(body.scope || qsScope || "all").toLowerCase();
 
-  if (!env.CONFIG.list || !env.CONFIG.delete) {
+  if (!env.WORX_AI_CONFIG.list || !env.WORX_AI_CONFIG.delete) {
     stop();
     return json(
       { ok: false, error: "CONFIG KV does not support list/delete in this environment" },
@@ -61,7 +61,7 @@ export async function handleClearCache(
   const results: Array<{ prefix: string; total: number; queued: number }> = [];
   for (const p of prefixes) {
     try {
-      const r = await time(`KV clear ${p}`, () => kvDeleteByPrefix(env.CONFIG, p, ctx));
+      const r = await time(`KV clear ${p}`, () => kvDeleteByPrefix(env.WORX_AI_CONFIG, p, ctx));
       results.push(r);
       log("[clear-cache]", p, r);
     } catch (error: any) {

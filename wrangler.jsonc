@@ -16,9 +16,14 @@
   // 👇 Add CONFIG KV with both prod id and preview_id
   "kv_namespaces": [
     {
-      "binding": "CONFIG",
-      "id": "2d873b13f8fd45fb924955dd598281c5",
-      "preview_id": "343f19548f5d4550aa17513fd2e35f93"
+      "binding": "WORX_AI_CONFIG",
+      "id": "b7cccd00ce024ecaac6f69ddbf1d1140",
+      "preview_id": "21fcb0c230de4f2ba50c339ad92e7949"
+    },
+    {
+      "binding": "WORX_AI_CONTENT",
+      "id": "c8e9cf82653944a585c223917c70ebc8",
+      "preview_id": "dd39795828984709847726014f1c7e69"
     }
   ],
 

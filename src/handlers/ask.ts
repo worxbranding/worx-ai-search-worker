@@ -185,7 +185,7 @@ ${intentGuide}`.trim();
   const ansKey = `ans:${await sha1Hex(ansKeyRaw)}`;
   if (wantCaching) {
     try {
-      const cachedAns = await env.CONFIG.get<string>(ansKey, "text");
+      const cachedAns = await env.WORX_AI_CONFIG.get<string>(ansKey, "text");
       if (cachedAns && cachedAns.trim()) {
         const sanitizedCached = ensureMarkdown(cachedAns);
         log("[cachedAnswer] HIT", ansKey);
@@ -243,12 +243,12 @@ ${intentGuide}`.trim();
   const ansTtl = Math.max(60, Math.min(86400, Number(cfg.search?.answer_cache_ttl ?? 600)));
   if (wantCaching) {
     try {
-      if (ctx?.waitUntil && env.CONFIG.put) {
-        ctx.waitUntil(env.CONFIG.put(ansKey, answer, { expirationTtl: ansTtl }));
+      if (ctx?.waitUntil && env.WORX_AI_CONFIG.put) {
+        ctx.waitUntil(env.WORX_AI_CONFIG.put(ansKey, answer, { expirationTtl: ansTtl }));
         log("[cachedAnswer] STORE-QUEUED", ansKey, `ttl=${ansTtl}`);
-      } else if (env.CONFIG.put) {
+      } else if (env.WORX_AI_CONFIG.put) {
         const stopPut = startTimer("KV put ans");
-        await env.CONFIG.put(ansKey, answer, { expirationTtl: ansTtl });
+        await env.WORX_AI_CONFIG.put(ansKey, answer, { expirationTtl: ansTtl });
         stopPut();
         log("[cachedAnswer] STORED", ansKey, `ttl=${ansTtl}`);
       }

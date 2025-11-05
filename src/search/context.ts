@@ -187,7 +187,7 @@ export async function buildDocContext(
 
   const kvKey = metadata["doc_key"];
   if (kvKey) {
-    const txt = await env.CONFIG.get<string>(String(kvKey), "text");
+    const txt = await env.WORX_AI_CONTENT.get<string>(String(kvKey), "text");
     const snippet = extractSnippet(txt || "", keywords, maxChars);
     if (snippet) {
       parts.push(`Details: ${snippet}`);

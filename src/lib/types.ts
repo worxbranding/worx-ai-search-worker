@@ -40,7 +40,8 @@ export interface KVNamespace {
 export interface Env {
   VECTORIZE: VectorizeIndex;
   AI: Ai;
-  CONFIG: KVNamespace;
+  WORX_AI_CONFIG: KVNamespace;
+  WORX_AI_CONTENT: KVNamespace;
   ALLOWED_ORIGINS?: string;
 }
 

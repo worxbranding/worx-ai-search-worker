@@ -7,7 +7,7 @@ import type { Env, SiteConfig } from "../lib/types";
  */
 export async function loadSiteConfig(env: Env, site: string): Promise<SiteConfig> {
   const key = `cfg:${site}`;
-  const cfg = await env.CONFIG.get<SiteConfig>(key, "json");
+  const cfg = await env.WORX_AI_CONFIG.get<SiteConfig>(key, "json");
   if (!cfg) throw new Error(`Missing CONFIG KV entry for ${key}`);
   if (!cfg.vectorize?.dims) throw new Error(`CONFIG ${key} missing vectorize.dims`);
   if (!cfg.ai?.embed_model) throw new Error(`CONFIG ${key} missing ai.embed_model`);

@@ -131,7 +131,7 @@ export async function handleDebugQueryById(
 
     for (const kvKey of kvCandidates) {
       try {
-        const txt = await env.CONFIG.get<string>(kvKey, "text");
+        const txt = await env.WORX_AI_CONTENT.get<string>(kvKey, "text");
         if (txt && txt.trim()) {
           const snippet = txt.slice(0, 3000);
           const vec = await cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, snippet, undefined, wantCaching);
@@ -188,13 +188,13 @@ export async function handleDebugListIds(
     stop();
     return json({ ok: false, error: "Missing ?site=" }, { status: 400 });
   }
-  if (!env.CONFIG.list) {
+  if (!env.WORX_AI_CONTENT.list) {
     stop();
-    return json({ ok: false, error: "CONFIG KV does not support list() in this environment" }, { status: 501 });
+    return json({ ok: false, error: "CONTENT KV does not support list() in this environment" }, { status: 501 });
   }
 
   const prefix = `doc:${site}:`;
-  const page = await time(`KV list ${prefix}`, () => env.CONFIG.list!({ prefix, limit, cursor }));
+  const page = await time(`KV list ${prefix}`, () => env.WORX_AI_CONTENT.list!({ prefix, limit, cursor }));
   const names = (page.keys || []).map((k) => k.name);
   const idsPrefixed = names.map((n) => (n.startsWith("doc:") ? n.slice(4) : n));
   const idsStripped = idsPrefixed.map((v) => (v.startsWith(`${site}:`) ? v.slice(site.length + 1) : v));
