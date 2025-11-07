@@ -14,14 +14,14 @@ This README explains how it works, how to configure it, and all the ways to inte
 
 ## Bindings and environment
 Bindings are defined in `wrangler.jsonc`:
-- VECTORIZE: Vectorize index (remote) used by the worker
-- AI: Workers AI
-- CONFIG: KV namespace used for:
-  - cfg:<site> — per-site configuration JSON
-  - doc:<site>:... — stored document texts (from your ingest pipeline)
-  - ans:<hash> — short‑TTL answer cache for /ask
-  - qemb:<hash> — short‑TTL embedding cache for queries
-- ALLOWED_ORIGINS (var): comma‑separated list of origins allowed by CORS, used when a site config does not specify its own list.
+- **VECTORIZE**: Vectorize index (remote) used by the worker
+- **AI**: Workers AI for embeddings and LLM inference
+- **WORX_AI_CONFIG**: KV namespace for per-site configuration (`cfg:<site>`)
+- **WORX_AI_CONTENT**: KV namespace for stored document texts (`doc:<site>:...`) from ingest pipeline
+- **CONFIG** (legacy name for WORX_AI_CONFIG): Used for:
+  - `ans:<hash>` — short-TTL answer cache for /ask
+  - `qemb:<hash>` — short-TTL embedding cache for queries
+- **ALLOWED_ORIGINS** (var): comma-separated list of origins allowed by CORS, used when a site config does not specify its own list.
 
 Example (see existing `wrangler.jsonc` in the repo):
 
@@ -71,6 +71,36 @@ Notes:
 - Auth: If `search.api_key` or top‑level `api_key` is set in the site config, protected endpoints require `x-api-key: <key>`.
 - Protected endpoints: all except `GET /status` require API key when configured.
 
+
+## Intent Detection System
+The worker includes an intelligent intent detection system that analyzes user queries to optimize search results and response formatting.
+
+**Intent Categories:**
+- `person` - Biography/who questions (e.g., "Who is John Doe?")
+- `service` - Services/capabilities queries (e.g., "What services do you offer?")
+- `case_study` - Project/portfolio requests (e.g., "Show me case studies")
+- `page_list` - List/index requests (e.g., "List all services")
+- `how_to` - Process/procedure questions (e.g., "How do I contact support?")
+- `company_info` - About/mission queries (e.g., "Tell me about the company")
+- `contact` - Contact information requests (e.g., "What's your phone number?")
+- `default` - General queries
+
+**How It Works:**
+1. User question analyzed for keywords and patterns
+2. Intent category detected
+3. Search topK adjusted based on intent (higher for lists, lower for specific questions)
+4. Results re-ranked using intent-specific algorithms
+5. Response formatting optimized for intent type
+6. Intent included in response metadata
+
+**Example:**
+```json
+{
+  "answer": "John Doe is our CEO...",
+  "intent": "person",
+  "sources": [...]
+}
+```
 
 ## Logging controls
 - Centralized in `src/log.ts` with a simple flag:
@@ -130,11 +160,13 @@ Request:
 GET /search?site=<site>&q=<query>&k=<topK>&debug=1&caching=1
 ```
 Params:
-- site (required): which tenant/site to query
-- q (required): search text
-- k (optional): topK results; defaults to site config `topK`
-- debug=1 (optional): include brief debug block in response
-- caching=1 (optional): enable embedding cache
+- `site` (required): which tenant/site to query
+- `q` (required): search text
+- `k`, `topK`, `top_k`, or `limit` (optional): topK results (clamped 1-24); defaults to site config `topK`
+- `debug=1` (optional): include brief debug block in response
+- `caching=1` (optional): enable embedding cache
+
+**Note:** Response includes `intent` field showing detected question category.
 
 Example:
 ```
@@ -163,12 +195,26 @@ POST /ask?site=<site>&debug=1&caching=1
 Content-Type: application/json
 x-api-key: <key>
 
-{ "site": "<site>", "q": "Who is Shae?", "k": 6 }
+{
+  "site": "<site>",
+  "q": "Who is Shae?",
+  "k": 6,
+  "systemPrompt": "Custom system prompt...",
+  "temperature": 0.2
+}
 ```
+Body parameters:
+- `site` (required): Must match query param
+- `q` (required): User question
+- `k`, `topK`, `top_k`, or `limit` (optional): Number of search results (clamped 1-24)
+- `systemPrompt` or `system_prompt` (optional): Override default system prompt
+- `temperature` or `chat_temperature` (optional): LLM temperature (clamped 0-1)
+
 Notes:
 - The `site` must be present both as a query param (for router to load config) and in the JSON body (validated by handler).
 - `debug=1` includes an internal `_debug` block. Omitted otherwise.
-- `caching=1` enables both embedding cache and short‑TTL answer cache.
+- `caching=1` enables both embedding cache and short-TTL answer cache.
+- Response includes `intent` field showing detected question category.
 
 Response (excerpt):
 ```
