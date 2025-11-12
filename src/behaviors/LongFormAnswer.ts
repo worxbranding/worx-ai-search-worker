@@ -10,10 +10,10 @@ import { buildDocContext, normalizeUrl } from "../search/context";
  * 1. Vector search returns top matches (already done)
  * 2. Fetch full KV text for top 3-5 pages
  * 3. Build comprehensive context with multiple sources
- * 4. Generate detailed 3-5 paragraph answer with LLM
+ * 4. Generate focused 2-3 paragraph answer with LLM
  * 5. Include citations to all source pages
  *
- * Token Usage: ~500-1000 tokens
+ * Token Usage: ~400-800 tokens (default max: 800)
  * This is the default comprehensive response behavior.
  */
 export class LongFormAnswer implements BehaviorHandler {
@@ -83,7 +83,7 @@ export class LongFormAnswer implements BehaviorHandler {
 - Use WORX in all caps.
 - If relevant information is missing, reply exactly with: "I couldn't locate that information in the current WORX content. Try a different phrasing or explore the site for more context."`;
 
-    const intentGuide = `Answer succinctly using the strongest supporting details. Highlight the most relevant facts and include inline links to the supporting page(s). Provide a comprehensive response with 3-5 paragraphs when appropriate.`;
+    const intentGuide = `Answer succinctly using the strongest supporting details. Highlight the most relevant facts and include inline links to the supporting page(s). Keep your response focused and concise - typically 2-3 short paragraphs. Always conclude your answer properly; do not leave thoughts incomplete.`;
 
     const system = `${basePrompt}
 
@@ -98,7 +98,7 @@ ${intentGuide}`.trim();
     // Run LLM
     const chatModel = config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
     const temperature = config.search?.chat_temperature ?? 0.1;
-    const max_output_tokens = Math.max(128, Math.min(2048, Number(config.search?.max_output_tokens ?? 1024)));
+    const max_output_tokens = Math.max(128, Math.min(2048, Number(config.search?.max_output_tokens ?? 800)));
 
     const chat = await env.AI.run(chatModel as any, {
       messages: [
