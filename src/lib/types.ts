@@ -45,12 +45,32 @@ export interface Env {
   ALLOWED_ORIGINS?: string;
 }
 
+/** Custom intent configuration for the new behavior system. */
+export interface CustomIntent {
+  name: string;
+  response_behavior: string;
+  system_prompt?: string;
+  priority: number;
+  enabled?: boolean;
+  detection: {
+    keywords?: string[];
+    metadata_matches?: {
+      title_contains?: string[];
+      page_kind?: string;
+      collection?: string;
+      path_starts_with?: string;
+    };
+  };
+}
+
 /** Per-site configuration retrieved from KV. */
 export type SiteConfig = {
   site_key: string;
   vectorize: { index_name: string; dims: number; metric?: "cosine" | "euclidean" | "dot" };
   ai: { embed_model: string };
   api_key?: string;
+  custom_intents?: CustomIntent[];
+  default_behavior?: string;
   search?: {
     allowed_origins?: string[];
     api_key?: string;

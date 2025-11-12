@@ -1,0 +1,138 @@
+import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
+import { buildDocContext, normalizeUrl } from "../search/context";
+
+/**
+ * LONG_FORM_ANSWER Behavior
+ *
+ * Use Case: "Tell me about X", "Explain X", "What is your approach to X?"
+ *
+ * Algorithm:
+ * 1. Vector search returns top matches (already done)
+ * 2. Fetch full KV text for top 3-5 pages
+ * 3. Build comprehensive context with multiple sources
+ * 4. Generate detailed 3-5 paragraph answer with LLM
+ * 5. Include citations to all source pages
+ *
+ * Token Usage: ~500-1000 tokens
+ * This is the default comprehensive response behavior.
+ */
+export class LongFormAnswer implements BehaviorHandler {
+  readonly name = "long_form_answer";
+
+  async execute(context: BehaviorContext): Promise<BehaviorResponse> {
+    const { query, matches, intent, config, env } = context;
+
+    if (!matches || matches.length === 0) {
+      return {
+        answer: "I couldn't locate that information in the current WORX content. Try a different phrasing or explore the site for more context.",
+        behavior: this.name,
+        intent: intent?.name || "default",
+      };
+    }
+
+    // Use top 5 matches for comprehensive context
+    const maxDocs = Math.max(1, Math.min(10, Number(config.search?.max_context_docs ?? 6)));
+    const maxChars = Math.max(200, Math.min(4000, Number(config.search?.max_kv_text_chars ?? 2000)));
+    const selected = matches.slice(0, Math.min(matches.length, maxDocs));
+
+    // Build allowed URL set for link validation
+    const allowedUrlSet = new Set<string>();
+    const MAX_ALLOWED_URLS = 40;
+    const addAllowedUrl = (candidate: unknown) => {
+      if (typeof candidate !== "string") return;
+      if (allowedUrlSet.size >= MAX_ALLOWED_URLS) return;
+      const trimmed = candidate.trim();
+      if (!trimmed) return;
+      const normalized = normalizeUrl(trimmed);
+      if (normalized) {
+        allowedUrlSet.add(normalized);
+      } else {
+        allowedUrlSet.add(trimmed);
+      }
+    };
+
+    // Build rich context for each document
+    const contexts = await Promise.all(
+      selected.map(async (match, idx) => {
+        const metadata = (match.metadata || {}) as Record<string, unknown>;
+        addAllowedUrl(metadata["url"]);
+        addAllowedUrl(metadata["canonical"]);
+
+        const docContext = await buildDocContext(
+          env,
+          metadata,
+          maxChars,
+          [], // No specific keywords for long form
+          "default", // Use default intent for context building
+          []
+        );
+        return `[#${idx + 1}] ${docContext}`;
+      })
+    );
+
+    const allowedUrls = Array.from(allowedUrlSet);
+    const linkHints = ["Use only these URLs when linking:", ...allowedUrls.map((u) => `- ${u}`)].join("\n");
+
+    // Build system prompt
+    const basePrompt = intent?.system_prompt ||
+      config.search?.system_prompt ||
+      `You are WORX AI, a strategic assistant that answers questions using only content from WORX.
+- Speak from the client partner perspective; avoid using "we".
+- Keep responses concise, confident, and focused on outcomes.
+- Always include inline Markdown links to the specific page you cite.
+- Use WORX in all caps.
+- If relevant information is missing, reply exactly with: "I couldn't locate that information in the current WORX content. Try a different phrasing or explore the site for more context."`;
+
+    const intentGuide = `Answer succinctly using the strongest supporting details. Highlight the most relevant facts and include inline links to the supporting page(s). Provide a comprehensive response with 3-5 paragraphs when appropriate.`;
+
+    const system = `${basePrompt}
+
+Link Guidance:
+${linkHints}
+
+Intent focus: ${intent?.name || "default"}
+${intentGuide}`.trim();
+
+    const user = `Question: ${query}\n\nContext:\n${contexts.join("\n\n")}`;
+
+    // Run LLM
+    const chatModel = config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
+    const temperature = config.search?.chat_temperature ?? 0.1;
+    const max_output_tokens = Math.max(128, Math.min(2048, Number(config.search?.max_output_tokens ?? 1024)));
+
+    const chat = await env.AI.run(chatModel as any, {
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      temperature,
+      max_output_tokens,
+    } as any);
+
+    const answer = (chat as any).response ||
+      "I couldn't locate that information in the current WORX content. Try a different phrasing or explore the site for more context.";
+
+    // Extract token usage
+    const usage = (chat as any)?.usage || (chat as any)?.meta?.usage || {};
+    const tokens_input = (usage?.input_tokens ?? usage?.prompt_tokens ?? usage?.inputTokens ?? null) as number | null;
+    const tokens_output = (usage?.output_tokens ?? usage?.completion_tokens ?? usage?.outputTokens ?? null) as number | null;
+    const total_tokens = (usage?.total_tokens ??
+      (tokens_input != null && tokens_output != null ? tokens_input + tokens_output : null)) as number | null;
+
+    return {
+      answer: answer as string,
+      behavior: this.name,
+      intent: intent?.name || "default",
+      sources: selected.slice(0, 5).map((match) => ({
+        title: (match.metadata?.title as string) || undefined,
+        url: (match.metadata?.url as string) || (match.metadata?.canonical as string) || undefined,
+        score: match.score,
+      })),
+      tokens_input,
+      tokens_output,
+      total_tokens,
+      model: chatModel,
+      temperature,
+    };
+  }
+}
