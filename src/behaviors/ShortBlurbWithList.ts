@@ -50,7 +50,7 @@ export class ShortBlurbWithList implements BehaviorHandler {
     const title = (metadata.title as string) || "this section";
     const url = (metadata.url as string) || (metadata.canonical as string) || "";
     const preview = (metadata.preview as string) || "";
-    const pageId = metadata.page_id ? Number(metadata.page_id) : undefined;
+    const pageId = metadata.cID ? Number(metadata.cID) : undefined;
     const isIndex = metadata.is_index === true || metadata.page_kind === "index";
 
     // If page has children and we have a pageId, use concreteDirective
@@ -82,10 +82,10 @@ Provide ONLY a brief 1-2 sentence introduction. The actual list will be rendered
         max_output_tokens: 256, // Short blurb only
       } as any);
 
-      const blurb = ((chat as any).response || preview || `Here are the ${title.toLowerCase()}:`) as string;
+      const answerText = ((chat as any).response || preview || `Here are the ${title.toLowerCase()}:`) as string;
 
       return {
-        blurb: blurb.trim(),
+        answer: answerText.trim(),
         concreteDirective: {
           type: "render_children",
           pageId,

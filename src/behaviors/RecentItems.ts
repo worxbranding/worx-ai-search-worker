@@ -44,7 +44,7 @@ export class RecentItems implements BehaviorHandler {
     const title = (metadata.title as string) || "items";
     const url = (metadata.url as string) || (metadata.canonical as string) || "";
     const childrenCount = Number(metadata.children_count || 0);
-    const pageId = metadata.page_id ? Number(metadata.page_id) : undefined;
+    const pageId = metadata.cID ? Number(metadata.cID) : undefined;
     const isIndex = metadata.is_index === true || metadata.page_kind === "index";
 
     // If we have an index page with children and pageId, use concreteDirective
@@ -74,10 +74,10 @@ Provide ONLY a brief introduction mentioning that these are the most recent item
         max_output_tokens: 256,
       } as any);
 
-      const blurb = ((chat as any).response || `Here are the most recent ${title.toLowerCase()}:`) as string;
+      const answerText = ((chat as any).response || `Here are the most recent ${title.toLowerCase()}:`) as string;
 
       return {
-        blurb: blurb.trim(),
+        answer: answerText.trim(),
         concreteDirective: {
           type: "render_recent",
           pageId,

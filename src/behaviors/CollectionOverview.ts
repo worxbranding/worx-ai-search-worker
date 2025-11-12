@@ -46,7 +46,7 @@ export class CollectionOverview implements BehaviorHandler {
     const collection = (metadata.collection as string) || "";
     const childrenCount = Number(metadata.children_count || 0);
     const isIndex = metadata.is_index === true || metadata.page_kind === "index";
-    const pageId = metadata.page_id ? Number(metadata.page_id) : undefined;
+    const pageId = metadata.cID ? Number(metadata.cID) : undefined;
 
     // Build context for overview
     const contextParts: string[] = [];
@@ -81,12 +81,12 @@ Provide a high-level overview of this collection. DO NOT list individual items.`
       max_output_tokens: 512,
     } as any);
 
-    const blurb = ((chat as any).response || `${title} contains ${childrenCount} items.`) as string;
+    const answerText = ((chat as any).response || `${title} contains ${childrenCount} items.`) as string;
 
     // If this is an index with children and we have pageId, optionally include concreteDirective
     if (isIndex && childrenCount > 0 && pageId) {
       return {
-        blurb: blurb.trim(),
+        answer: answerText.trim(),
         concreteDirective: {
           type: "render_children",
           pageId,
@@ -112,7 +112,7 @@ Provide a high-level overview of this collection. DO NOT list individual items.`
       (tokens_input != null && tokens_output != null ? tokens_input + tokens_output : null)) as number | null;
 
     return {
-      answer: blurb.trim(),
+      answer: answerText.trim(),
       behavior: this.name,
       intent: intent?.name || "collection",
       sources: [
