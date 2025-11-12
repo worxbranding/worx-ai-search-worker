@@ -75,7 +75,7 @@ Notes:
 ## Intent Detection System
 The worker includes an intelligent intent detection system that analyzes user queries to optimize search results and response formatting.
 
-**Intent Categories:**
+**Current Intent Categories (v1.0):**
 - `person` - Biography/who questions (e.g., "Who is John Doe?")
 - `service` - Services/capabilities queries (e.g., "What services do you offer?")
 - `case_study` - Project/portfolio requests (e.g., "Show me case studies")
@@ -85,10 +85,10 @@ The worker includes an intelligent intent detection system that analyzes user qu
 - `contact` - Contact information requests (e.g., "What's your phone number?")
 - `default` - General queries
 
-**How It Works:**
-1. User question analyzed for keywords and patterns
+**How It Works (Current):**
+1. User question analyzed for keywords and patterns (hardcoded regex)
 2. Intent category detected
-3. Search topK adjusted based on intent (higher for lists, lower for specific questions)
+3. Search topK adjusted based on intent
 4. Results re-ranked using intent-specific algorithms
 5. Response formatting optimized for intent type
 6. Intent included in response metadata
@@ -101,6 +101,17 @@ The worker includes an intelligent intent detection system that analyzes user qu
   "sources": [...]
 }
 ```
+
+**🔜 Upcoming in v2.0: Generic Behavior Framework**
+
+The intent system is being redesigned for maximum flexibility. See `/Users/shaeapland/ai_projects/INTENT_SYSTEM_REDESIGN.md` for full details.
+
+Key changes:
+- **Hardcoded intents replaced with generic behaviors** (short_blurb_with_list, long_form_answer, etc.)
+- **Zero-code custom intent creation** via ConcreteCMS dashboard
+- **Hybrid detection:** Keywords (fast path) + Metadata matching (semantic path)
+- **Per-intent system prompts** editable without deployment
+- All current intents will be migrated to the new system
 
 ## Logging controls
 - Centralized in `src/log.ts` with a simple flag:
