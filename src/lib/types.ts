@@ -78,6 +78,8 @@ export type SiteConfig = {
     chat_temperature?: number;
     system_prompt?: string;
     topK?: number;
+    initial_topK?: number; // How many results to fetch from vectorize for re-ranking (default: 15)
+    final_topK?: number; // How many results to pass to behavior after re-ranking (default: 3)
     max_output_tokens?: number;
     max_context_docs?: number;
     max_kv_text_chars?: number;

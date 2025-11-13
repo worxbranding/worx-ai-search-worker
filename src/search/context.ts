@@ -127,6 +127,10 @@ export function extractSnippet(text: string, keywords: string[], maxChars: numbe
 /**
  * Build the rich context blob fed into the chat model. It combines page
  * metadata, optional children lists, and KV snippets while respecting intent.
+ *
+ * @param fullText - Optional pre-fetched full text (from re-ranking). If provided,
+ *                   avoids duplicate KV fetch. For detail pages, uses full text
+ *                   without truncation.
  */
 export async function buildDocContext(
   env: Env,
@@ -134,7 +138,8 @@ export async function buildDocContext(
   maxChars = 2000,
   keywords: string[] = [],
   intent: IntentKey = INTENT_DEFAULT,
-  parsedChildren: ChildLink[] = []
+  parsedChildren: ChildLink[] = [],
+  fullText: string | null = null
 ): Promise<string> {
   const parts: string[] = [];
 
@@ -185,12 +190,31 @@ export async function buildDocContext(
     }
   }
 
+  // Fetch or use pre-fetched full text
+  let txt = fullText; // Use pre-fetched text if available
   const kvKey = metadata["doc_key"];
-  if (kvKey) {
-    const txt = await env.WORX_AI_CONTENT.get<string>(String(kvKey), "text");
-    const snippet = extractSnippet(txt || "", keywords, maxChars);
-    if (snippet) {
-      parts.push(`Details: ${snippet}`);
+
+  if (!txt && kvKey) {
+    // Fallback: fetch from KV if not already provided
+    txt = await env.WORX_AI_CONTENT.get<string>(String(kvKey), "text");
+  }
+
+  if (txt && txt.trim()) {
+    const pageKind = (metadata["page_kind"] as string) || "";
+    const isDetailPage = pageKind === "detail";
+
+    // For detail pages, use FULL TEXT (no truncation)
+    // For other pages, use intelligent snippet extraction
+    if (isDetailPage) {
+      // Detail page: Use full content without truncation
+      // This ensures person bios, service descriptions get complete context
+      parts.push(`Details: ${txt.trim()}`);
+    } else {
+      // Index/other pages: Use snippet extraction to focus on relevant content
+      const snippet = extractSnippet(txt, keywords, maxChars);
+      if (snippet) {
+        parts.push(`Details: ${snippet}`);
+      }
     }
   }
 

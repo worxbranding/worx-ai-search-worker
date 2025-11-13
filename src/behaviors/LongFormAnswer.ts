@@ -58,13 +58,17 @@ export class LongFormAnswer implements BehaviorHandler {
         addAllowedUrl(metadata["url"]);
         addAllowedUrl(metadata["canonical"]);
 
+        // Use pre-fetched full text from re-ranking (if available)
+        const fullText = (match as any)._fullText as string | null;
+
         const docContext = await buildDocContext(
           env,
           metadata,
           maxChars,
           [], // No specific keywords for long form
           "default", // Use default intent for context building
-          []
+          [],
+          fullText
         );
         return `[#${idx + 1}] ${docContext}`;
       })

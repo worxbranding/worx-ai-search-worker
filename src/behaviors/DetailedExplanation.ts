@@ -56,13 +56,17 @@ export class DetailedExplanation implements BehaviorHandler {
         addAllowedUrl(metadata["url"]);
         addAllowedUrl(metadata["canonical"]);
 
+        // Use pre-fetched full text from re-ranking (if available)
+        const fullText = (match as any)._fullText as string | null;
+
         const docContext = await buildDocContext(
           env,
           metadata,
           maxChars,
           [],
           "how_to",
-          []
+          [],
+          fullText
         );
         return `[#${idx + 1}] ${docContext}`;
       })

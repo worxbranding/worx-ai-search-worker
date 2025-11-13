@@ -41,13 +41,18 @@ export class SinglePageSummary implements BehaviorHandler {
     if (url) allowedUrlSet.add(normalizeUrl(url) || url);
     if (metadata.canonical) allowedUrlSet.add(normalizeUrl(metadata.canonical as string) || metadata.canonical as string);
 
+    // Use pre-fetched full text from re-ranking (if available)
+    // For person bios, this ensures we get the complete bio text
+    const fullText = (bestMatch as any)._fullText as string | null;
+
     const docContext = await buildDocContext(
       env,
       metadata,
       maxChars, // Higher char limit for deep dive
       [],
       "person",
-      []
+      [],
+      fullText
     );
 
     const allowedUrls = Array.from(allowedUrlSet);

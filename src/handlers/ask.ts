@@ -8,59 +8,10 @@ import { ensureMarkdown } from "../search/context";
 import { cachedEmbed, filterToSite } from "../search/vectorize";
 import { sha1Hex } from "../utils/crypto";
 import { isNoAnswer } from "../utils/isNoAnswer";
+import { extractKeywords, applyMetadataBoost, applyKeywordBoost } from "../search/rerank";
+import { fetchFullTextForMatches } from "../utils/fullText";
 import type { Env, ExecutionContext, SiteConfig, SearchMatch, CustomIntent } from "../lib/types";
 
-/**
- * Re-rank search results by boosting matches that align with intent metadata.
- * This ensures that when an intent is detected, the most relevant page is selected
- * even if vector search didn't rank it highest.
- */
-function reRankByIntentMetadata(matches: SearchMatch[], metadataMatches: Record<string, any>): SearchMatch[] {
-  return matches
-    .map((match) => {
-      const metadata = (match.metadata || {}) as Record<string, any>;
-      let boost = 0;
-
-      // Boost if collection matches
-      if (metadataMatches.collection && metadata.collection === metadataMatches.collection) {
-        boost += 0.1;
-      }
-
-      // Boost if page_kind matches
-      if (metadataMatches.page_kind && metadata.page_kind === metadataMatches.page_kind) {
-        boost += 0.05;
-      }
-
-      // Boost if path EXACTLY matches expected prefix (strongest signal)
-      if (metadataMatches.path_starts_with && typeof metadata.path === 'string') {
-        if (metadata.path === metadataMatches.path_starts_with) {
-          // Exact path match - this is almost certainly the right page
-          boost += 0.5;
-        } else if (metadata.path.startsWith(metadataMatches.path_starts_with)) {
-          // Path starts with - still strong
-          boost += 0.3;
-        }
-      }
-
-      // Boost if title contains expected terms
-      if (metadataMatches.title_contains && Array.isArray(metadataMatches.title_contains) && typeof metadata.title === 'string') {
-        const titleLower = metadata.title.toLowerCase();
-        for (const term of metadataMatches.title_contains) {
-          if (titleLower.includes(String(term).toLowerCase())) {
-            boost += 0.15;
-            break; // Only boost once for title match
-          }
-        }
-      }
-
-      // Return match with adjusted score
-      return {
-        ...match,
-        score: match.score + boost,
-      };
-    })
-    .sort((a, b) => b.score - a.score); // Re-sort by adjusted score
-}
 
 /**
  * Conversation endpoint for WORX AI using the new behavior system.
@@ -116,10 +67,13 @@ export async function handleAsk(
     log("[Intent] Detected via keywords:", detectedIntent.name);
   }
 
-  // Prepare vector search
-  const baseTopK = clampTopK(Number(body.k || cfg.search?.topK || 6));
-  // Fetch more results when intent is detected to ensure target page is included
-  const initialK = detectedIntent ? Math.min(10, baseTopK + 5) : Math.min(baseTopK, 6);
+  // Prepare vector search with two-stage filtering
+  // Stage 1: Fetch many results from vectorize for re-ranking
+  const initial_topK = Number(cfg.search?.initial_topK ?? 15);
+  // Stage 2: After re-ranking, pass fewer results to behavior
+  const final_topK = Number(cfg.search?.final_topK ?? 3);
+
+  log("[TopK] initial_topK:", initial_topK, "final_topK:", final_topK);
 
   const vector = await time("cachedEmbed(ask)", () =>
     cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, q, ctx, wantCaching)
@@ -133,8 +87,9 @@ export async function handleAsk(
     return filterToSite(site, res?.matches || []);
   };
 
-  // Run vector search (fetch more results if intent was detected)
-  let matches: SearchMatch[] = await runQuery(initialK);
+  // Run vector search - fetch initial_topK for re-ranking
+  let matches: SearchMatch[] = await runQuery(initial_topK);
+  log("[VectorSearch] Fetched", matches.length, "results from vectorize");
 
   // Phase 2: If no keyword match, try metadata-based detection (semantic path)
   if (!detectedIntent && matches.length > 0) {
@@ -148,16 +103,58 @@ export async function handleAsk(
   const intent = detectedIntent || getDefaultIntent();
   const behaviorName = intent.response_behavior || cfg.default_behavior || "long_form_answer";
 
-  // Re-rank matches ONLY if intent was detected by keywords (not by metadata)
-  // This prevents false positives where metadata matches trigger wrong intents
-  if (detectedIntent && detectedIntent.name !== "default" && matches.length > 0 && (detectedIntent as any).detection?.metadata_matches) {
-    const beforeScores = matches.slice(0, 3).map(m => ({ path: (m.metadata as any)?.path, score: m.score }));
-    matches = reRankByIntentMetadata(matches, (detectedIntent as any).detection.metadata_matches);
-    const afterScores = matches.slice(0, 3).map(m => ({ path: (m.metadata as any)?.path, score: m.score }));
-    log("[Re-rank] Before:", JSON.stringify(beforeScores));
-    log("[Re-rank] After:", JSON.stringify(afterScores));
-    log("[Re-rank] Boosted matches based on intent metadata for:", detectedIntent.name);
+  // Extract keywords from query for re-ranking
+  const queryKeywords = extractKeywords(q);
+  log("[Keywords] Extracted from query:", JSON.stringify(queryKeywords));
+
+  // THREE-PASS RE-RANKING SYSTEM
+  if (matches.length > 0) {
+    const originalScores = matches.slice(0, 3).map(m => ({
+      title: (m.metadata as any)?.title,
+      score: m.score.toFixed(3)
+    }));
+
+    // PASS 1: Metadata-only boosting (fast, 0 KV reads)
+    const metadataMatches = (detectedIntent && detectedIntent.name !== "default")
+      ? ((detectedIntent as any).detection?.metadata_matches || {})
+      : {};
+
+    matches = applyMetadataBoost(matches, metadataMatches);
+    log("[Pass1:Metadata] Applied metadata boosting");
+
+    // Slice to top 8 candidates for text fetching (saves KV reads)
+    const candidateCount = Math.min(8, matches.length);
+    const candidates = matches.slice(0, candidateCount);
+    log("[Pass1:Metadata] Top", candidateCount, "candidates after metadata boost");
+
+    // PASS 2: Fetch full text from KV for candidates
+    const candidatesWithText = await time("fetchFullText", () =>
+      fetchFullTextForMatches(env, candidates)
+    );
+    log("[Pass2:FetchText] Fetched full text for", candidatesWithText.length, "candidates");
+
+    // PASS 3: Keyword boosting using full text
+    const reranked = applyKeywordBoost(candidatesWithText, queryKeywords);
+    log("[Pass3:Keywords] Applied keyword boosting with full text");
+
+    const afterScores = reranked.slice(0, 3).map(m => ({
+      title: (m.metadata as any)?.title,
+      score: m.score.toFixed(3),
+      metadataBoost: ((m as any)._metadataBoost || 0).toFixed(3),
+      keywordBoost: ((m as any)._keywordBoost || 0).toFixed(3),
+      totalBoost: ((m as any)._totalBoost || 0).toFixed(3)
+    }));
+
+    log("[Re-rank] Original:", JSON.stringify(originalScores));
+    log("[Re-rank] Final:", JSON.stringify(afterScores));
+
+    // Replace matches with reranked results
+    matches = reranked;
   }
+
+  // Phase 3: Slice to final_topK for behavior/LLM
+  const finalMatches = matches.slice(0, Math.min(final_topK, matches.length));
+  log("[Final] Passing", finalMatches.length, "results to behavior (from", matches.length, "candidates)");
 
   log("[Behavior] Using:", behaviorName, "for intent:", intent.name);
 
@@ -165,7 +162,8 @@ export async function handleAsk(
   const ansKeyRaw = JSON.stringify({
     site,
     q,
-    k: initialK,
+    initial_k: initial_topK,
+    final_k: final_topK,
     behavior: behaviorName,
     intent: intent.name,
     customPromptHash: intent.system_prompt ? await sha1Hex(intent.system_prompt) : null,
@@ -200,13 +198,19 @@ export async function handleAsk(
         const bodyOut: Record<string, unknown> = {
           ok: true,
           q,
-          k: initialK,
+          k: final_topK,
+          initial_k: initial_topK,
           ...cachedResponse, // Include answer, blurb, concreteDirective, etc.
           stats,
         };
 
         if (wantDebug) {
-          bodyOut._debug = { matches: matches.slice(0, 3), cache: "hit", intent: intent.name };
+          bodyOut._debug = {
+            matches: finalMatches.slice(0, 3),
+            allMatches: matches.slice(0, 5),
+            cache: "hit",
+            intent: intent.name
+          };
         }
 
         const response = json(bodyOut);
@@ -218,12 +222,12 @@ export async function handleAsk(
     }
   }
 
-  // Execute behavior
+  // Execute behavior with sliced results
   const behavior = getBehavior(behaviorName);
   const behaviorResponse = await time("behavior.execute", () =>
     behavior.execute({
       query: q,
-      matches,
+      matches: finalMatches,
       intent,
       config: cfg,
       env,
@@ -269,14 +273,16 @@ export async function handleAsk(
   const bodyOut: Record<string, unknown> = {
     ok: true,
     q,
-    k: initialK,
+    k: final_topK, // Number of results passed to behavior
+    initial_k: initial_topK, // Number of results fetched from vectorize
     ...behaviorResponse, // Include answer, blurb, concreteDirective, sources, etc.
     stats,
   };
 
   if (wantDebug) {
     bodyOut._debug = {
-      matches: matches.slice(0, 3),
+      matches: finalMatches.slice(0, 3), // Show the final matches passed to behavior
+      allMatches: matches.slice(0, 5), // Show top 5 from full set for comparison
       cache: "miss",
       intent: intent.name,
       behavior: behaviorName,
