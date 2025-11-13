@@ -11,14 +11,67 @@ import { isNoAnswer } from "../utils/isNoAnswer";
 import type { Env, ExecutionContext, SiteConfig, SearchMatch, CustomIntent } from "../lib/types";
 
 /**
+ * Re-rank search results by boosting matches that align with intent metadata.
+ * This ensures that when an intent is detected, the most relevant page is selected
+ * even if vector search didn't rank it highest.
+ */
+function reRankByIntentMetadata(matches: SearchMatch[], metadataMatches: Record<string, any>): SearchMatch[] {
+  return matches
+    .map((match) => {
+      const metadata = (match.metadata || {}) as Record<string, any>;
+      let boost = 0;
+
+      // Boost if collection matches
+      if (metadataMatches.collection && metadata.collection === metadataMatches.collection) {
+        boost += 0.1;
+      }
+
+      // Boost if page_kind matches
+      if (metadataMatches.page_kind && metadata.page_kind === metadataMatches.page_kind) {
+        boost += 0.05;
+      }
+
+      // Boost if path EXACTLY matches expected prefix (strongest signal)
+      if (metadataMatches.path_starts_with && typeof metadata.path === 'string') {
+        if (metadata.path === metadataMatches.path_starts_with) {
+          // Exact path match - this is almost certainly the right page
+          boost += 0.5;
+        } else if (metadata.path.startsWith(metadataMatches.path_starts_with)) {
+          // Path starts with - still strong
+          boost += 0.3;
+        }
+      }
+
+      // Boost if title contains expected terms
+      if (metadataMatches.title_contains && Array.isArray(metadataMatches.title_contains) && typeof metadata.title === 'string') {
+        const titleLower = metadata.title.toLowerCase();
+        for (const term of metadataMatches.title_contains) {
+          if (titleLower.includes(String(term).toLowerCase())) {
+            boost += 0.15;
+            break; // Only boost once for title match
+          }
+        }
+      }
+
+      // Return match with adjusted score
+      return {
+        ...match,
+        score: match.score + boost,
+      };
+    })
+    .sort((a, b) => b.score - a.score); // Re-sort by adjusted score
+}
+
+/**
  * Conversation endpoint for WORX AI using the new behavior system.
  *
  * Flow:
  * 1. Detect intent from query (keyword-based, fast path)
  * 2. Run vector search
  * 3. Detect intent from results (metadata-based, semantic path)
- * 4. Execute appropriate behavior
- * 5. Cache response if enabled
+ * 4. Re-rank results based on intent metadata (if detected)
+ * 5. Execute appropriate behavior
+ * 6. Cache response if enabled
  */
 export async function handleAsk(
   req: Request,
@@ -65,7 +118,8 @@ export async function handleAsk(
 
   // Prepare vector search
   const baseTopK = clampTopK(Number(body.k || cfg.search?.topK || 6));
-  const initialK = Math.min(baseTopK, 6);
+  // Fetch more results when intent is detected to ensure target page is included
+  const initialK = detectedIntent ? Math.min(10, baseTopK + 5) : Math.min(baseTopK, 6);
 
   const vector = await time("cachedEmbed(ask)", () =>
     cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, q, ctx, wantCaching)
@@ -79,7 +133,7 @@ export async function handleAsk(
     return filterToSite(site, res?.matches || []);
   };
 
-  // Run vector search
+  // Run vector search (fetch more results if intent was detected)
   let matches: SearchMatch[] = await runQuery(initialK);
 
   // Phase 2: If no keyword match, try metadata-based detection (semantic path)
@@ -93,6 +147,17 @@ export async function handleAsk(
   // Use detected intent or fall back to default
   const intent = detectedIntent || getDefaultIntent();
   const behaviorName = intent.response_behavior || cfg.default_behavior || "long_form_answer";
+
+  // Re-rank matches ONLY if intent was detected by keywords (not by metadata)
+  // This prevents false positives where metadata matches trigger wrong intents
+  if (detectedIntent && detectedIntent.name !== "default" && matches.length > 0 && (detectedIntent as any).detection?.metadata_matches) {
+    const beforeScores = matches.slice(0, 3).map(m => ({ path: (m.metadata as any)?.path, score: m.score }));
+    matches = reRankByIntentMetadata(matches, (detectedIntent as any).detection.metadata_matches);
+    const afterScores = matches.slice(0, 3).map(m => ({ path: (m.metadata as any)?.path, score: m.score }));
+    log("[Re-rank] Before:", JSON.stringify(beforeScores));
+    log("[Re-rank] After:", JSON.stringify(afterScores));
+    log("[Re-rank] Boosted matches based on intent metadata for:", detectedIntent.name);
+  }
 
   log("[Behavior] Using:", behaviorName, "for intent:", intent.name);
 

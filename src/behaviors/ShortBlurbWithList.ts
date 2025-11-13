@@ -79,7 +79,7 @@ Provide ONLY a brief 1-2 sentence introduction. The actual list will be rendered
           { role: "user", content: userPrompt },
         ],
         temperature,
-        max_output_tokens: 256, // Short blurb only
+        max_tokens: 256, // Short blurb only
       } as any);
 
       const answerText = ((chat as any).response || preview || `Here are the ${title.toLowerCase()}:`) as string;
@@ -126,7 +126,7 @@ Provide a brief answer with a link to ${url}.`;
         { role: "user", content: userPrompt },
       ],
       temperature,
-      max_output_tokens: 384,
+      max_tokens: 384,
     } as any);
 
     const answer = (chat as any).response || `For information about ${title}, visit ${url}`;

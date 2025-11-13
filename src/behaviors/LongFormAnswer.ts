@@ -98,7 +98,7 @@ ${intentGuide}`.trim();
     // Run LLM
     const chatModel = config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
     const temperature = config.search?.chat_temperature ?? 0.1;
-    const max_output_tokens = Math.max(128, Math.min(2048, Number(config.search?.max_output_tokens ?? 800)));
+    const max_tokens = Math.max(128, Math.min(2048, Number(config.search?.max_output_tokens ?? 800)));
 
     const chat = await env.AI.run(chatModel as any, {
       messages: [
@@ -106,7 +106,7 @@ ${intentGuide}`.trim();
         { role: "user", content: user },
       ],
       temperature,
-      max_output_tokens,
+      max_tokens,
     } as any);
 
     const answer = (chat as any).response ||

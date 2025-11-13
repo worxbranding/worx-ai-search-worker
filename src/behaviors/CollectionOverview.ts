@@ -78,7 +78,7 @@ Provide a high-level overview of this collection. DO NOT list individual items.`
         { role: "user", content: userPrompt },
       ],
       temperature,
-      max_output_tokens: 512,
+      max_tokens: 512,
     } as any);
 
     const answerText = ((chat as any).response || `${title} contains ${childrenCount} items.`) as string;

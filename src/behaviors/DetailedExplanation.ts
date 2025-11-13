@@ -93,10 +93,17 @@ ${intentGuide}`.trim();
 
     const user = `Question: ${query}\n\nContext:\n${contexts.join("\n\n")}`;
 
-    // Run LLM with slightly higher token limit for detailed explanations
+    // Run LLM with higher token limit for detailed explanations
     const chatModel = config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
     const temperature = config.search?.chat_temperature ?? 0.1;
-    const max_output_tokens = Math.max(512, Math.min(2048, Number(config.search?.max_output_tokens ?? 1024)));
+    // Allow up to 4096 tokens for detailed explanations
+    const configMaxTokens = Number(config.search?.max_output_tokens);
+    const max_tokens = isNaN(configMaxTokens) || configMaxTokens <= 0
+      ? 2048 // Default if not configured
+      : Math.min(4096, configMaxTokens); // Clamp to 4096 max
+
+    console.log("[DetailedExplanation] config.search?.max_output_tokens =", config.search?.max_output_tokens);
+    console.log("[DetailedExplanation] computed max_tokens =", max_tokens);
 
     const chat = await env.AI.run(chatModel as any, {
       messages: [
@@ -104,7 +111,7 @@ ${intentGuide}`.trim();
         { role: "user", content: user },
       ],
       temperature,
-      max_output_tokens,
+      max_tokens,
     } as any);
 
     const answer = (chat as any).response ||

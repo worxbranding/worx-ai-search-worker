@@ -65,7 +65,7 @@ Provide a brief 2-3 sentence answer with a link to ${url}.`;
         { role: "user", content: userPrompt },
       ],
       temperature,
-      max_output_tokens: 256, // Short answer only
+      max_tokens: 256, // Short answer only
     } as any);
 
     const answer = (chat as any).response || `For information about ${title}, visit [${title}](${url}).`;

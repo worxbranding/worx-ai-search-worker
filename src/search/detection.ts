@@ -111,11 +111,12 @@ export function detectIntentFromResults(
 
 /**
  * Check if a result's metadata matches the intent's criteria.
- * ANY matching criterion returns true (OR logic).
+ * Uses AND logic: ALL specified criteria must match.
+ * If path_starts_with is specified, it MUST match (strongest signal).
  *
  * @param metadata - Result metadata
  * @param criteria - Intent's metadata matching configuration
- * @returns true if metadata matches criteria
+ * @returns true if metadata matches ALL criteria
  */
 function matchesMetadataCriteria(
   metadata: Record<string, unknown> | undefined,
@@ -130,43 +131,47 @@ function matchesMetadataCriteria(
     return false;
   }
 
-  // Check title_contains (array of possible title fragments)
-  if (criteria.title_contains && criteria.title_contains.length > 0) {
-    const title = ((metadata.title as string) || "").toLowerCase();
-    if (title) {
-      for (const term of criteria.title_contains) {
-        if (term && title.includes(term.toLowerCase())) {
-          return true;
-        }
-      }
-    }
-  }
-
-  // Check page_kind (exact match)
-  if (criteria.page_kind) {
-    const pageKind = (metadata.page_kind as string) || "";
-    if (pageKind.toLowerCase() === criteria.page_kind.toLowerCase()) {
-      return true;
-    }
-  }
-
-  // Check collection (exact match)
-  if (criteria.collection) {
-    const collection = (metadata.collection as string) || "";
-    if (collection.toLowerCase() === criteria.collection.toLowerCase()) {
-      return true;
-    }
-  }
-
-  // Check path_starts_with
+  // If path_starts_with is specified, it MUST match (strongest signal)
   if (criteria.path_starts_with) {
     const path = (metadata.path as string) || (metadata.url as string) || "";
-    if (path.toLowerCase().startsWith(criteria.path_starts_with.toLowerCase())) {
-      return true;
+    if (!path.toLowerCase().startsWith(criteria.path_starts_with.toLowerCase())) {
+      return false; // Path doesn't match - fail immediately
     }
   }
 
-  return false;
+  // Check collection (if specified, must match)
+  if (criteria.collection) {
+    const collection = (metadata.collection as string) || "";
+    if (collection.toLowerCase() !== criteria.collection.toLowerCase()) {
+      return false;
+    }
+  }
+
+  // Check page_kind (if specified, must match)
+  if (criteria.page_kind) {
+    const pageKind = (metadata.page_kind as string) || "";
+    if (pageKind.toLowerCase() !== criteria.page_kind.toLowerCase()) {
+      return false;
+    }
+  }
+
+  // Check title_contains (if specified, at least one must match)
+  if (criteria.title_contains && criteria.title_contains.length > 0) {
+    const title = ((metadata.title as string) || "").toLowerCase();
+    let titleMatches = false;
+    for (const term of criteria.title_contains) {
+      if (term && title.includes(term.toLowerCase())) {
+        titleMatches = true;
+        break;
+      }
+    }
+    if (!titleMatches) {
+      return false;
+    }
+  }
+
+  // All specified criteria matched
+  return true;
 }
 
 /**

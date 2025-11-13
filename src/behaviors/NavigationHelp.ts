@@ -71,7 +71,7 @@ Provide navigation guidance with the breadcrumb path and direct link.`;
         { role: "user", content: userPrompt },
       ],
       temperature,
-      max_output_tokens: 256,
+      max_tokens: 256,
     } as any);
 
     // Generate answer with navigation path
