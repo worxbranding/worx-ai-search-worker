@@ -181,7 +181,7 @@ function matchesMetadataCriteria(
 export function getDefaultIntent(): CustomIntent {
   return {
     name: "default",
-    response_behavior: "long_form_answer",
+    response_behavior: "short_answer",
     priority: 0,
     enabled: true,
     detection: {},
