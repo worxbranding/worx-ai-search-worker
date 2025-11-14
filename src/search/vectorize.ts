@@ -105,6 +105,9 @@ export async function embed(env: Env, model: string, dims: number, text: string)
 /**
  * Try to reuse embeddings from KV when enabled, otherwise fall back to the live
  * model call. The waitUntil branch queues writes when running inside Workers.
+ *
+ * Embedding cache TTL can be configured via config.search.embed_cache_ttl.
+ * Default: 7776000 seconds (90 days) - embeddings are deterministic and rarely change.
  */
 export async function cachedEmbed(
   env: Env,
@@ -112,7 +115,8 @@ export async function cachedEmbed(
   dims: number,
   text: string,
   ctx?: ExecutionContext,
-  useCache = false
+  useCache = false,
+  embedTtl = 7776000
 ): Promise<number[]> {
   const key = `qemb:${await sha1Hex(text)}`;
 
@@ -135,13 +139,13 @@ export async function cachedEmbed(
 
   try {
     if (ctx?.waitUntil && env.WORX_AI_CONFIG.put) {
-      ctx.waitUntil(env.WORX_AI_CONFIG.put(key, JSON.stringify(embedding), { expirationTtl: 86400 }));
-      log("[cachedEmbed] STORE-QUEUED", key, "ttl=86400");
+      ctx.waitUntil(env.WORX_AI_CONFIG.put(key, JSON.stringify(embedding), { expirationTtl: embedTtl }));
+      log("[cachedEmbed] STORE-QUEUED", key, `ttl=${embedTtl}`);
     } else if (env.WORX_AI_CONFIG.put) {
       const stop = startTimer("KV put qemb");
-      await env.WORX_AI_CONFIG.put(key, JSON.stringify(embedding), { expirationTtl: 86400 });
+      await env.WORX_AI_CONFIG.put(key, JSON.stringify(embedding), { expirationTtl: embedTtl });
       stop();
-      log("[cachedEmbed] STORED", key, "ttl=86400");
+      log("[cachedEmbed] STORED", key, `ttl=${embedTtl}`);
     }
   } catch {
     log("[cachedEmbed] STORE-SKIP", key, "KV not writable or put() unavailable");

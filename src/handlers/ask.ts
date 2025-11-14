@@ -140,7 +140,8 @@ export async function handleAsk(
   );
 
   // Cache the response
-  const ansTtl = Math.max(60, Math.min(86400, Number(cfg.search?.answer_cache_ttl ?? 600)));
+  // Default: 30 days (2592000s). Will be cleared on ingest for fresh answers.
+  const ansTtl = Math.max(60, Math.min(31536000, Number(cfg.search?.answer_cache_ttl ?? 2592000)));
   if (wantCaching) {
     try {
       const cacheValue = JSON.stringify(behaviorResponse);
