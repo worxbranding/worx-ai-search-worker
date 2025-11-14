@@ -2,22 +2,23 @@ import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./Behav
 import { buildDocContext, normalizeUrl } from "../search/context";
 
 /**
- * LONG_FORM_ANSWER Behavior
+ * MEDIUM_ANSWER Behavior
  *
- * Use Case: "Tell me about X", "Explain X", "What is your approach to X?"
+ * Use Case: Questions that need more than a quick fact but less than a comprehensive essay.
+ * Perfect for "How does X work?", "What are the benefits of X?", "Can you explain X?"
  *
  * Algorithm:
  * 1. Vector search returns top matches (already done)
- * 2. Fetch full KV text for top 5-6 pages
- * 3. Build comprehensive context with multiple sources
- * 4. Generate thorough 2-3 paragraph answer with LLM
- * 5. Include citations to all source pages
+ * 2. Fetch full KV text for top 3 pages
+ * 3. Build context with key sources
+ * 4. Generate focused 1 paragraph answer (4-6 sentences) with LLM
+ * 5. Include inline citations
  *
- * Token Usage: Flexible, uses config max_output_tokens (default: 800, max: 2048)
- * This is the default comprehensive response behavior.
+ * Token Usage: ~200-300 tokens (fixed max: 300)
+ * Sweet spot between brevity and depth.
  */
-export class LongFormAnswer implements BehaviorHandler {
-  readonly name = "long_form_answer";
+export class MediumAnswer implements BehaviorHandler {
+  readonly name = "medium_answer";
 
   async execute(context: BehaviorContext): Promise<BehaviorResponse> {
     const { query, matches, intent, config, env } = context;
@@ -30,14 +31,14 @@ export class LongFormAnswer implements BehaviorHandler {
       };
     }
 
-    // Use top 5 matches for comprehensive context
-    const maxDocs = Math.max(1, Math.min(10, Number(config.search?.max_context_docs ?? 6)));
-    const maxChars = Math.max(200, Math.min(4000, Number(config.search?.max_kv_text_chars ?? 2000)));
+    // Use top 3 matches for balanced context
+    const maxDocs = 3;
+    const maxChars = Math.max(200, Math.min(3000, Number(config.search?.max_kv_text_chars ?? 1500)));
     const selected = matches.slice(0, Math.min(matches.length, maxDocs));
 
     // Build allowed URL set for link validation
     const allowedUrlSet = new Set<string>();
-    const MAX_ALLOWED_URLS = 40;
+    const MAX_ALLOWED_URLS = 20;
     const addAllowedUrl = (candidate: unknown) => {
       if (typeof candidate !== "string") return;
       if (allowedUrlSet.size >= MAX_ALLOWED_URLS) return;
@@ -51,7 +52,7 @@ export class LongFormAnswer implements BehaviorHandler {
       }
     };
 
-    // Build rich context for each document
+    // Build context for each document
     const contexts = await Promise.all(
       selected.map(async (match, idx) => {
         const metadata = (match.metadata || {}) as Record<string, unknown>;
@@ -65,8 +66,8 @@ export class LongFormAnswer implements BehaviorHandler {
           env,
           metadata,
           maxChars,
-          [], // No specific keywords for long form
-          "default", // Use default intent for context building
+          [],
+          intent?.name || "default",
           [],
           fullText
         );
@@ -87,11 +88,10 @@ export class LongFormAnswer implements BehaviorHandler {
 - Use WORX in all caps.
 - If relevant information is missing, reply exactly with: "I couldn't locate that information in the current WORX content. Try a different phrasing or explore the site for more context."`;
 
-    const intentGuide = `CRITICAL LENGTH REQUIREMENT: Write 2-3 paragraphs for a comprehensive answer.
-Your answer should be thorough and well-developed across multiple paragraphs.
-Include the strongest supporting details and multiple inline links to relevant pages.
-Each paragraph should cover a different aspect or provide additional depth.
-This is a comprehensive response - more detailed than a single paragraph answer.`;
+    const intentGuide = `CRITICAL LENGTH REQUIREMENT: Write exactly ONE paragraph.
+Your answer MUST be 4-6 sentences - no more, no less.
+Include the most important details and 1-2 inline links to supporting pages.
+Be thorough but stop after one paragraph. Do not write multiple paragraphs.`;
 
     const system = `${basePrompt}
 
@@ -106,13 +106,12 @@ ${intentGuide}`.trim();
 Context:
 ${contexts.join("\n\n")}
 
-Write a comprehensive answer with 2-3 paragraphs. Be thorough and include multiple supporting details.`;
+Write ONE paragraph (4-6 sentences) answering this question. Stop after one paragraph.`;
 
     // Run LLM
     const chatModel = config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
     const temperature = config.search?.chat_temperature ?? 0.1;
-    // Use config value for long form - allow full responses (default: 800, but respect config)
-    const max_tokens = Math.max(400, Math.min(2048, Number(config.search?.max_output_tokens ?? 800)));
+    const max_tokens = 300; // Fixed at 300 tokens for medium length
 
     const chat = await env.AI.run(chatModel as any, {
       messages: [
@@ -137,7 +136,7 @@ Write a comprehensive answer with 2-3 paragraphs. Be thorough and include multip
       answer: answer as string,
       behavior: this.name,
       intent: intent?.name || "default",
-      sources: selected.slice(0, 5).map((match) => ({
+      sources: selected.slice(0, 3).map((match) => ({
         title: (match.metadata?.title as string) || undefined,
         url: (match.metadata?.url as string) || (match.metadata?.canonical as string) || undefined,
         score: match.score,

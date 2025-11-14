@@ -1,6 +1,7 @@
 import type { BehaviorHandler } from "./BehaviorHandler";
 import { ShortBlurbWithList } from "./ShortBlurbWithList";
 import { LongFormAnswer } from "./LongFormAnswer";
+import { MediumAnswer } from "./MediumAnswer";
 import { ShortAnswer } from "./ShortAnswer";
 import { DetailedExplanation } from "./DetailedExplanation";
 import { SinglePageSummary } from "./SinglePageSummary";
@@ -25,6 +26,7 @@ class BehaviorRegistry {
     // Register all behaviors
     this.registerBehavior(new ShortBlurbWithList());
     this.registerBehavior(new LongFormAnswer());
+    this.registerBehavior(new MediumAnswer());
     this.registerBehavior(new ShortAnswer());
     this.registerBehavior(new DetailedExplanation());
     this.registerBehavior(new SinglePageSummary());

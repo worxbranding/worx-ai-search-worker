@@ -8,11 +8,11 @@ import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./Behav
  * Algorithm:
  * 1. Vector search returns top 2 matches
  * 2. Use ONLY metadata + preview (no KV text fetch for speed)
- * 3. Generate 2-3 sentence concise response
+ * 3. Generate 1-2 sentence concise response
  * 4. Include single best link
  *
- * Token Usage: ~100-200 tokens
- * Optimized for speed and brevity.
+ * Token Usage: ~50-150 tokens (fixed max: 150)
+ * Optimized for speed and extreme brevity.
  */
 export class ShortAnswer implements BehaviorHandler {
   readonly name = "short_answer";
@@ -45,16 +45,17 @@ export class ShortAnswer implements BehaviorHandler {
     if (collection) contextParts.push(`Category: ${collection}`);
 
     const systemPrompt = intent?.system_prompt ||
-      `You are WORX AI. Provide a brief, direct answer in 2-3 sentences maximum.
-Be concise and include a link to the source page in Markdown format [text](url).
-Focus on answering the specific question asked.`;
+      `You are WORX AI. You MUST provide a VERY BRIEF answer.
+CRITICAL: Keep your answer to 1-2 sentences ONLY. Be extremely concise.
+Include ONE link to the most relevant page in Markdown format [text](url).
+Do not elaborate or provide extra details. Answer the question directly and stop.`;
 
     const userPrompt = `Question: ${query}
 
 Context:
 ${contextParts.join("\n")}
 
-Provide a brief 2-3 sentence answer with a link to ${url}.`;
+Provide ONLY a 1-2 sentence answer with one link to ${url}. Be extremely brief.`;
 
     const chatModel = config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
     const temperature = config.search?.chat_temperature ?? 0.1;
@@ -65,7 +66,7 @@ Provide a brief 2-3 sentence answer with a link to ${url}.`;
         { role: "user", content: userPrompt },
       ],
       temperature,
-      max_tokens: 256, // Short answer only
+      max_tokens: 150, // Reduced from 256 - force brevity
     } as any);
 
     const answer = (chat as any).response || `For information about ${title}, visit [${title}](${url}).`;
