@@ -130,8 +130,9 @@ Caching can be controlled at two levels with clear precedence:
 - Set `search.caching: true | false` in `cfg:<site>` to define the default behavior when the URL has no `caching` parameter.
 
 What is cached when ON:
-- Query embedding cache `qemb:*` is used for /search and /ask.
+- Query embedding cache `qemb:*` is used for /search and /ask (TTL default 90 days; configurable via `search.embed_cache_ttl`).
 - /ask answer cache `ans:*` is checked and stored (TTL default 600s; configurable via `search.answer_cache_ttl`).
+- **All cache keys include site metadata** for multi-tenant safe clearing and isolation.
 
 
 ## Endpoints
@@ -252,6 +253,8 @@ On answer cache hit, `stats.cached = true` and token fields are null.
 ### 4) Admin: /admin/clear-cache (GET or POST)
 Clear caches under `ans:*` and/or `qemb:*` prefixes in CONFIG KV. Requires API key.
 
+**Multi-tenant safe:** Only deletes cache keys with matching site metadata, preventing cross-site cache interference.
+
 Requests:
 - Clear all:
 ```
@@ -361,6 +364,31 @@ Prereqs: Node 18+, Wrangler CLI, Cloudflare account with Vectorize, Workers AI, 
 - Deploy: `npm run deploy`
 
 Ensure your `wrangler.jsonc` has correct bindings and your KV contains the necessary `cfg:<site>` entries.
+
+
+## Automatic Cache Invalidation
+The search worker integrates with the ingest worker to automatically clear stale answer caches when content changes.
+
+**When cache is cleared:**
+- After ingest worker updates/adds content (via `/ingest/run`)
+- After ingest worker deletes content (via `/ingest/delete`)
+- After ingest worker clears site (via `/ingest/clear`)
+- After queue processing completes (async operations)
+
+**How it works:**
+1. Ingest worker calls `/admin/clear-cache?site=<site>` after content operations
+2. Search worker deletes all `ans:*` keys with matching site metadata
+3. Query embeddings (`qemb:*`) are preserved (deterministic, content-independent)
+4. Next /ask request generates fresh answer with updated content
+5. New answer is cached with site metadata for future requests
+
+**Benefits:**
+- Users always see answers based on current content
+- No manual cache clearing required after content updates
+- Multi-tenant safe (only affects specified site's cache)
+- Preserves query embedding cache for performance
+
+**Note:** Cache clearing is automatic when using the ConcreteCMS package's event-driven auto-indexing or manual ingest operations.
 
 
 ## Troubleshooting
