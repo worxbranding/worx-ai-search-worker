@@ -146,11 +146,11 @@ export async function handleAsk(
     try {
       const cacheValue = JSON.stringify(behaviorResponse);
       if (ctx?.waitUntil && env.WORX_AI_CONFIG.put) {
-        ctx.waitUntil(env.WORX_AI_CONFIG.put(ansKey, cacheValue, { expirationTtl: ansTtl }));
-        log("[cachedAnswer] STORE-QUEUED", ansKey, `ttl=${ansTtl}`);
+        ctx.waitUntil(env.WORX_AI_CONFIG.put(ansKey, cacheValue, { expirationTtl: ansTtl, metadata: { site } }));
+        log("[cachedAnswer] STORE-QUEUED", ansKey, `ttl=${ansTtl}`, `site=${site}`);
       } else if (env.WORX_AI_CONFIG.put) {
-        await env.WORX_AI_CONFIG.put(ansKey, cacheValue, { expirationTtl: ansTtl });
-        log("[cachedAnswer] STORED", ansKey, `ttl=${ansTtl}`);
+        await env.WORX_AI_CONFIG.put(ansKey, cacheValue, { expirationTtl: ansTtl, metadata: { site } });
+        log("[cachedAnswer] STORED", ansKey, `ttl=${ansTtl}`, `site=${site}`);
       }
     } catch (error) {
       log("[cachedAnswer] STORE-ERROR", ansKey, String((error as Error)?.message || error));

@@ -116,7 +116,8 @@ export async function cachedEmbed(
   text: string,
   ctx?: ExecutionContext,
   useCache = false,
-  embedTtl = 7776000
+  embedTtl = 7776000,
+  site?: string
 ): Promise<number[]> {
   const key = `qemb:${await sha1Hex(text)}`;
 
@@ -138,14 +139,15 @@ export async function cachedEmbed(
   log("[cachedEmbed] MISS", key, "(computed)");
 
   try {
+    const metadata = site ? { site } : undefined;
     if (ctx?.waitUntil && env.WORX_AI_CONFIG.put) {
-      ctx.waitUntil(env.WORX_AI_CONFIG.put(key, JSON.stringify(embedding), { expirationTtl: embedTtl }));
-      log("[cachedEmbed] STORE-QUEUED", key, `ttl=${embedTtl}`);
+      ctx.waitUntil(env.WORX_AI_CONFIG.put(key, JSON.stringify(embedding), { expirationTtl: embedTtl, metadata }));
+      log("[cachedEmbed] STORE-QUEUED", key, `ttl=${embedTtl}`, site ? `site=${site}` : "(no site)");
     } else if (env.WORX_AI_CONFIG.put) {
       const stop = startTimer("KV put qemb");
-      await env.WORX_AI_CONFIG.put(key, JSON.stringify(embedding), { expirationTtl: embedTtl });
+      await env.WORX_AI_CONFIG.put(key, JSON.stringify(embedding), { expirationTtl: embedTtl, metadata });
       stop();
-      log("[cachedEmbed] STORED", key, `ttl=${embedTtl}`);
+      log("[cachedEmbed] STORED", key, `ttl=${embedTtl}`, site ? `site=${site}` : "(no site)");
     }
   } catch {
     log("[cachedEmbed] STORE-SKIP", key, "KV not writable or put() unavailable");

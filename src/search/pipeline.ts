@@ -55,7 +55,7 @@ export async function executeSearchPipeline(
   // Generate embedding and run vector search
   const embedTtl = Math.max(86400, Math.min(31536000, Number(cfg.search?.embed_cache_ttl ?? 7776000)));
   const vector = await time("cachedEmbed", () =>
-    cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, query, ctx, wantCaching, embedTtl)
+    cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, query, ctx, wantCaching, embedTtl, site)
   );
 
   // @ts-ignore Workers typing for VECTORIZE.query is permissive
