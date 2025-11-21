@@ -100,7 +100,8 @@ ${intentGuide}`.trim();
     const user = `Question: ${query}\n\nContext:\n${contexts.join("\n\n")}`;
 
     // Run LLM
-    const chatModel = config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
+    // Use intent-specific model, fallback to site default, then system default
+    const chatModel = intent?.chat_model || config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
     const temperature = config.search?.chat_temperature ?? 0.1;
     const max_tokens = Math.max(384, Math.min(1536, Number(config.search?.max_output_tokens ?? 896)));
 

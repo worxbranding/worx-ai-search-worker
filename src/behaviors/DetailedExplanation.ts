@@ -98,7 +98,8 @@ ${intentGuide}`.trim();
     const user = `Question: ${query}\n\nContext:\n${contexts.join("\n\n")}`;
 
     // Run LLM with higher token limit for detailed explanations
-    const chatModel = config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
+    // Use intent-specific model, fallback to site default, then system default
+    const chatModel = intent?.chat_model || config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
     const temperature = config.search?.chat_temperature ?? 0.1;
     // Allow up to 4096 tokens for detailed explanations
     const configMaxTokens = Number(config.search?.max_output_tokens);

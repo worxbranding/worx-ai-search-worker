@@ -69,7 +69,8 @@ ${contextParts.join("\n")}
 
 Provide a high-level overview of this collection. DO NOT list individual items.`;
 
-    const chatModel = config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
+    // Use intent-specific model, fallback to site default, then system default
+    const chatModel = intent?.chat_model || config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
     const temperature = config.search?.chat_temperature ?? 0.1;
 
     const chat = await env.AI.run(chatModel as any, {

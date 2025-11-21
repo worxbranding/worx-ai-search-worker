@@ -62,7 +62,8 @@ Items: ${childrenCount}
 
 Provide ONLY a brief introduction mentioning that these are the most recent items.`;
 
-      const chatModel = config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
+      // Use intent-specific model, fallback to site default, then system default
+      const chatModel = intent?.chat_model || config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
       const temperature = config.search?.chat_temperature ?? 0.1;
 
       const chat = await env.AI.run(chatModel as any, {
@@ -110,7 +111,8 @@ URL: ${url}
 
 Provide information about recent items with a link.`;
 
-    const chatModel = config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
+    // Use intent-specific model, fallback to site default, then system default
+    const chatModel = intent?.chat_model || config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
     const temperature = config.search?.chat_temperature ?? 0.1;
 
     const chat = await env.AI.run(chatModel as any, {

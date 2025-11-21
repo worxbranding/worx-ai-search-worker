@@ -132,4 +132,5 @@ export function behaviorExists(name: string): boolean {
 }
 
 // Export types
-export type { BehaviorHandler, BehaviorContext, BehaviorResponse, CustomIntent } from "./BehaviorHandler";
+export type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
+export type { CustomIntent } from "../lib/types";

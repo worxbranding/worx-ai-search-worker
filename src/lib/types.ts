@@ -50,6 +50,7 @@ export interface CustomIntent {
   name: string;
   response_behavior: string;
   system_prompt?: string;
+  chat_model?: string;
   priority: number;
   enabled?: boolean;
   detection: {
@@ -84,6 +85,7 @@ export type SiteConfig = {
     max_context_docs?: number;
     max_kv_text_chars?: number;
     answer_cache_ttl?: number;
+    embed_cache_ttl?: number;
     caching?: boolean;
   };
 };

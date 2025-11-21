@@ -53,7 +53,7 @@ export function parseChildrenMd(childrenMd: unknown): ChildLink[] {
 }
 
 /** Trim the number of child links to intent-specific limits. */
-export function limitChildrenForIntent(children: ChildLink[], intent: IntentKey): ChildLink[] {
+export function limitChildrenForIntent(children: ChildLink[], intent: IntentKey | string): ChildLink[] {
   const limit = intent === "page_list" ? 6 : intent === "case_study" ? 4 : 3;
   return children.slice(0, limit);
 }
@@ -137,7 +137,7 @@ export async function buildDocContext(
   metadata: Record<string, unknown>,
   maxChars = 2000,
   keywords: string[] = [],
-  intent: IntentKey = INTENT_DEFAULT,
+  intent: IntentKey | string = INTENT_DEFAULT,
   parsedChildren: ChildLink[] = [],
   fullText: string | null = null
 ): Promise<string> {

@@ -32,7 +32,7 @@ async function kvDeleteByPrefix(
         .filter((k) => {
           // For answer cache (ans:*), check if key contains site in hash
           // This is a simple contains check - may need refinement
-          const meta = k.metadata as any;
+          const meta = (k as any).metadata;
           if (meta && meta.site === siteFilter) return true;
           // Fallback: check if key name contains site identifier
           if (k.name.includes(siteFilter)) return true;

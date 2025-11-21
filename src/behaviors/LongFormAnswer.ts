@@ -109,7 +109,8 @@ ${contexts.join("\n\n")}
 Write a comprehensive answer with 2-3 paragraphs. Be thorough and include multiple supporting details.`;
 
     // Run LLM
-    const chatModel = config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
+    // Use intent-specific model, fallback to site default, then system default
+    const chatModel = intent?.chat_model || config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
     const temperature = config.search?.chat_temperature ?? 0.1;
     // Use config value for long form - allow full responses (default: 800, but respect config)
     const max_tokens = Math.max(400, Math.min(2048, Number(config.search?.max_output_tokens ?? 800)));
