@@ -30,12 +30,15 @@ async function kvDeleteByPrefix(
     if (siteFilter) {
       namesToDelete = keys
         .filter((k) => {
-          // For answer cache (ans:*), check if key contains site in hash
-          // This is a simple contains check - may need refinement
+          // Primary: check metadata.site for exact match
           const meta = (k as any).metadata;
           if (meta && meta.site === siteFilter) return true;
-          // Fallback: check if key name contains site identifier
-          if (k.name.includes(siteFilter)) return true;
+          // Fallback: check key name for exact prefix match
+          // Key format is "prefix:site:hash", so after the prefix the site
+          // must be followed by ":" to avoid substring false positives
+          const afterPrefix = k.name.indexOf(":") + 1;
+          const rest = k.name.substring(afterPrefix);
+          if (rest === siteFilter || rest.startsWith(siteFilter + ":")) return true;
           return false;
         })
         .map((k) => k.name);

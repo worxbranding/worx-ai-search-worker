@@ -119,7 +119,7 @@ export async function cachedEmbed(
   embedTtl = 7776000,
   site?: string
 ): Promise<number[]> {
-  const key = `qemb:${await sha1Hex(text)}`;
+  const key = `qemb:${await sha1Hex(model + ":" + text)}`;
 
   if (!useCache) {
     return await time("embed(cachedEmbed)", () => embed(env, model, dims, text));

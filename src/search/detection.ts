@@ -37,7 +37,7 @@ export function detectIntentFromQuery(
   // Sort by priority (highest first)
   const sortedIntents = [...customIntents]
     .filter((intent) => intent.enabled !== false)
-    .sort((a, b) => (b.priority || 50) - (a.priority || 50));
+    .sort((a, b) => (b.priority ?? 50) - (a.priority ?? 50));
 
   for (const intent of sortedIntents) {
     const keywords = intent.detection?.keywords;
@@ -50,8 +50,27 @@ export function detectIntentFromQuery(
       if (!keyword) continue;
 
       const keywordLower = keyword.toLowerCase().trim();
-      if (queryLower.includes(keywordLower)) {
-        return intent; // Early match
+      if (keywordLower.includes(" ")) {
+        // Multi-word phrase: substring match is fine
+        if (queryLower.includes(keywordLower)) {
+          return intent; // Early match
+        }
+      } else {
+        // Single-word keyword: require word boundaries to avoid
+        // false positives (e.g., "is" matching "mission")
+        const idx = queryLower.indexOf(keywordLower);
+        if (idx === -1) continue;
+        // Check all occurrences for a word-boundary match
+        let pos = idx;
+        while (pos !== -1) {
+          const before = pos === 0 || /[\s\p{P}]/u.test(queryLower[pos - 1]);
+          const afterIdx = pos + keywordLower.length;
+          const after = afterIdx >= queryLower.length || /[\s\p{P}]/u.test(queryLower[afterIdx]);
+          if (before && after) {
+            return intent; // Early match with word boundary
+          }
+          pos = queryLower.indexOf(keywordLower, pos + 1);
+        }
       }
     }
   }
@@ -87,7 +106,7 @@ export function detectIntentFromResults(
   // Sort by priority (highest first)
   const sortedIntents = [...customIntents]
     .filter((intent) => intent.enabled !== false)
-    .sort((a, b) => (b.priority || 50) - (a.priority || 50));
+    .sort((a, b) => (b.priority ?? 50) - (a.priority ?? 50));
 
   // Check top 3 results
   const topResults = results.slice(0, 3);

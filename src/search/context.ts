@@ -206,9 +206,9 @@ export async function buildDocContext(
     // For detail pages, use FULL TEXT (no truncation)
     // For other pages, use intelligent snippet extraction
     if (isDetailPage) {
-      // Detail page: Use full content without truncation
-      // This ensures person bios, service descriptions get complete context
-      parts.push(`Details: ${txt.trim()}`);
+      // Detail page: Use full content but cap at 4000 chars to avoid
+      // sending excessive text to the LLM context window
+      parts.push(`Details: ${txt.trim().substring(0, 4000)}`);
     } else {
       // Index/other pages: Use snippet extraction to focus on relevant content
       const snippet = extractSnippet(txt, keywords, maxChars);

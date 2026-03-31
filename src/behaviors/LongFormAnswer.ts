@@ -66,7 +66,7 @@ export class LongFormAnswer implements BehaviorHandler {
           metadata,
           maxChars,
           [], // No specific keywords for long form
-          "default", // Use default intent for context building
+          intent?.name || "default", // Pass detected intent for context building
           [],
           fullText
         );
