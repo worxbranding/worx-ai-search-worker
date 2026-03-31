@@ -9,6 +9,8 @@ This README explains how it works, how to configure it, and all the ways to inte
 - Vector store: Cloudflare Vectorize (binding: `VECTORIZE`) containing document embeddings.
 - Inference: Workers AI (binding: `AI`) for both embeddings and chat responses.
 - State/config: Cloudflare KV (binding: `CONFIG`) for per-site configuration, document texts, and caches.
+- Behavior system: 10 built-in response behaviors selected by custom intent detection (keyword + metadata hybrid).
+- Search pipeline: Two-phase intent detection, three-pass re-ranking (metadata boost, full text fetch, keyword boost).
 - Worker routes: REST endpoints for status, search, ask, admin cache control, and debugging.
 
 
@@ -44,18 +46,22 @@ Create a JSON object in KV under key `cfg:<site>`. Required fields are marked.
   "vectorize": { "index_name": "worx-ai-index", "dims": 1024, "metric": "cosine" },  // required
   "ai": { "embed_model": "@cf/baai/bge-large-en-v1.5" },                               // required
   "api_key": "dev-secret-123",                                                          // optional, can also set under search.api_key
+  "default_behavior": "long_form_answer",    // fallback behavior when no intent matches (default: long_form_answer)
+  "custom_intents": [ ... ],                 // array of custom intent objects (see Intent Detection section)
   "search": {
     "allowed_origins": ["http://localhost:5173", "https://your-frontend.app"],
     "api_key": "dev-secret-123",             // API key required on protected endpoints via header x-api-key
     "chat_model": "@cf/meta/llama-3.1-8b-instruct",
     "chat_temperature": 0.1,
     "system_prompt": "You are a helpful assistant...", // optional; worker provides a sensible default with URL restrictions
-    "topK": 6,
+    "initial_topK": 15,             // results fetched from Vectorize for re-ranking (default 15)
+    "final_topK": 3,                // results passed to behavior after re-ranking (default 3)
     "max_output_tokens": 1024,
     // Performance/cost tunables
     "max_context_docs": 6,           // max docs included in /ask prompt context
     "max_kv_text_chars": 3000,       // truncate KV text per doc to this many chars
-    "answer_cache_ttl": 600,         // seconds for /ask answer cache
+    "answer_cache_ttl": 2592000,     // seconds for /ask answer cache (default: 30 days; cleared on ingest)
+    "embed_cache_ttl": 7776000,      // seconds for query embedding cache (default: 90 days)
     "caching": true                  // default caching behavior (true/false); can be overridden per-request
   }
 }
@@ -72,46 +78,130 @@ Notes:
 - Protected endpoints: all except `GET /status` require API key when configured.
 
 
-## Intent Detection System
-The worker includes an intelligent intent detection system that analyzes user queries to optimize search results and response formatting.
+## Intent Detection & Behavior System (v2.0)
+The worker uses a generic behavior framework where all intents are defined in site configuration (not hardcoded). Custom intents map user queries to response behaviors through hybrid detection.
 
-**Current Intent Categories (v1.0):**
-- `person` - Biography/who questions (e.g., "Who is John Doe?")
-- `service` - Services/capabilities queries (e.g., "What services do you offer?")
-- `case_study` - Project/portfolio requests (e.g., "Show me case studies")
-- `page_list` - List/index requests (e.g., "List all services")
-- `how_to` - Process/procedure questions (e.g., "How do I contact support?")
-- `company_info` - About/mission queries (e.g., "Tell me about the company")
-- `contact` - Contact information requests (e.g., "What's your phone number?")
-- `default` - General queries
+### Behavior Framework
+Ten built-in behaviors control how the worker generates responses. Each behavior has its own response strategy, token budget, and output format.
 
-**How It Works (Current):**
-1. User question analyzed for keywords and patterns (hardcoded regex)
-2. Intent category detected
-3. Search topK adjusted based on intent
-4. Results re-ranked using intent-specific algorithms
-5. Response formatting optimized for intent type
-6. Intent included in response metadata
+**LLM-based behaviors** (generate answers via Workers AI):
+- `short_answer` - Quick facts, 1-2 sentences. Uses top 2 matches, metadata-only context (no KV text fetch). Max 150 tokens.
+- `medium_answer` - Moderate detail, 2-4 sentences with supporting context.
+- `long_form_answer` - Comprehensive answers with full KV text context. This is the **default behavior** when no intent matches.
+- `detailed_explanation` - In-depth explanations with multiple source citations.
+- `single_page_summary` - Summarizes a single page's content.
+- `comparison` - Compares multiple results side-by-side.
+- `navigation_help` - Guides users to the right page/section.
 
-**Example:**
+**List behaviors** (return `concreteDirective` for CMS rendering):
+- `short_blurb_with_list` - LLM generates a 1-2 sentence blurb; CMS renders the list from its database via `concreteDirective`. 85% token reduction vs. having the LLM generate the list.
+- `collection_overview` - Overview of a content collection with directive to render items.
+- `recent_items` - Brief intro with directive to render recent content.
+
+List behaviors return a `concreteDirective` object in the response instead of (or alongside) an LLM-generated answer. The CMS widget reads this directive and renders the list directly from the database, avoiding expensive token usage for enumerating items.
+
 ```json
 {
-  "answer": "John Doe is our CEO...",
-  "intent": "person",
-  "sources": [...]
+  "answer": "Here are our services:",
+  "concreteDirective": {
+    "type": "render_children",
+    "pageId": 42,
+    "sortBy": "weight",
+    "limit": 10
+  },
+  "behavior": "short_blurb_with_list",
+  "intent": "services"
 }
 ```
 
-**🔜 Upcoming in v2.0: Generic Behavior Framework**
+Directive types: `render_children`, `render_siblings`, `render_recent`.
 
-The intent system is being redesigned for maximum flexibility. See `/Users/shaeapland/ai_projects/INTENT_SYSTEM_REDESIGN.md` for full details.
+### Custom Intents (KV Configuration)
+Intents are defined in the site config under `custom_intents`. Each intent maps detection rules to a response behavior, with optional model and prompt overrides.
 
-Key changes:
-- **Hardcoded intents replaced with generic behaviors** (short_blurb_with_list, long_form_answer, etc.)
-- **Zero-code custom intent creation** via ConcreteCMS dashboard
-- **Hybrid detection:** Keywords (fast path) + Metadata matching (semantic path)
-- **Per-intent system prompts** editable without deployment
-- All current intents will be migrated to the new system
+```json
+{
+  "custom_intents": [
+    {
+      "name": "services",
+      "response_behavior": "short_blurb_with_list",
+      "priority": 80,
+      "enabled": true,
+      "system_prompt": "You are a helpful assistant. Briefly introduce our services.",
+      "chat_model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "detection": {
+        "keywords": ["services", "what do you offer", "capabilities"],
+        "metadata_matches": {
+          "path_starts_with": "/services",
+          "page_kind": "index",
+          "collection": "Services",
+          "title_contains": ["service", "capability"]
+        }
+      }
+    }
+  ]
+}
+```
+
+Intent fields:
+- `name` (required) - Unique identifier
+- `response_behavior` (required) - One of the 10 behavior names
+- `priority` (required) - Higher values match first (default: 50)
+- `enabled` (optional) - Set `false` to disable without deleting
+- `system_prompt` (optional) - Override the behavior's default system prompt
+- `chat_model` (optional) - Override the site's default chat model for this intent
+- `detection` (required) - Detection rules (see below)
+
+When no custom intent matches, the worker falls back to the `default_behavior` from site config, or `long_form_answer` if unset.
+
+### Two-Phase Hybrid Detection
+Intent detection runs in two phases, combining fast keyword matching with semantic metadata analysis.
+
+**Phase 1: Pre-Search Keyword Matching (fast path)**
+Before vector search runs, the query is checked against each intent's `detection.keywords` array. If any keyword appears in the query string (case-insensitive substring match), that intent is selected immediately. Intents are checked in priority order (highest first). Only enabled intents are considered.
+
+Example: Query "What services do you offer?" matches keyword "services" in the services intent.
+
+**Phase 2: Post-Search Metadata Matching (semantic path)**
+If no keyword match is found, vector search runs first, then the top 3 results are checked against each intent's `detection.metadata_matches` criteria. All specified criteria use AND logic (all must match). Criteria options:
+- `path_starts_with` - URL/path prefix (strongest signal, fails immediately if wrong)
+- `collection` - Exact collection name match
+- `page_kind` - Exact page kind match
+- `title_contains` - At least one term must appear in the title
+
+Example: Query "What opportunities are available?" has no keyword match, but vector search returns pages under `/careers` which matches the careers intent's `path_starts_with: "/careers"`.
+
+### Three-Pass Re-Ranking
+After vector search returns `initial_topK` results (default 15), three re-ranking passes refine the order before slicing to `final_topK` (default 3) for the behavior.
+
+1. **Pass 1 - Metadata Boost:** Boosts results whose metadata fields match the detected intent's `metadata_matches` criteria. Fast, zero KV reads.
+2. **Pass 2 - Full Text Fetch:** Fetches full document text from KV for the top 8 candidates after metadata boosting.
+3. **Pass 3 - Keyword Boost:** Boosts results whose full text contains query keywords and/or the detected intent's keywords. Uses combined, deduplicated keyword set from both sources.
+
+The final re-ranked results are sliced to `final_topK` and passed to the behavior handler.
+
+### Per-Intent Model & Prompt Overrides
+Each custom intent can override the site-level LLM settings:
+- `chat_model` on the intent overrides `search.chat_model` from site config
+- `system_prompt` on the intent overrides the behavior's built-in default prompt
+
+Fallback chain: intent setting → site config setting → system default.
+
+### Response Format
+All `/ask` and `/search` responses include `intent` and `behavior` fields:
+
+```json
+{
+  "ok": true,
+  "q": "What services do you offer?",
+  "answer": "We offer a range of professional services:",
+  "behavior": "short_blurb_with_list",
+  "intent": "services",
+  "concreteDirective": { "type": "render_children", "pageId": 42, "sortBy": "weight" },
+  "sources": [{ "title": "Services", "url": "/services", "score": 0.89 }],
+  "stats": { "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast", "cached": false, "..." : "..." }
+}
+```
 
 ## Logging controls
 - Centralized in `src/log.ts` with a simple flag:
@@ -131,7 +221,7 @@ Caching can be controlled at two levels with clear precedence:
 
 What is cached when ON:
 - Query embedding cache `qemb:*` is used for /search and /ask (TTL default 90 days; configurable via `search.embed_cache_ttl`).
-- /ask answer cache `ans:*` is checked and stored (TTL default 600s; configurable via `search.answer_cache_ttl`).
+- /ask answer cache `ans:*` is checked and stored (TTL default 30 days / 2,592,000s; configurable via `search.answer_cache_ttl`). The long TTL is safe because the ingest worker automatically clears answer caches when content changes.
 - **All cache keys include site metadata** for multi-tenant safe clearing and isolation.
 
 
@@ -178,7 +268,7 @@ Params:
 - `debug=1` (optional): include brief debug block in response
 - `caching=1` (optional): enable embedding cache
 
-**Note:** Response includes `intent` field showing detected question category.
+**Note:** Response includes `intent` and `behavior` fields showing the detected intent and response behavior used.
 
 Example:
 ```
@@ -193,6 +283,8 @@ Response (excerpt):
   "site": "worxbranding-dev",
   "q": "hello",
   "k": 6,
+  "intent": "default",
+  "behavior": "long_form_answer",
   "results": [ { "id": "worxbranding-dev:page:311", "score": 0.66, "metadata": { ... } }, ... ]
 }
 ```
@@ -225,8 +317,9 @@ Body parameters:
 Notes:
 - The `site` must be present both as a query param (for router to load config) and in the JSON body (validated by handler).
 - `debug=1` includes an internal `_debug` block. Omitted otherwise.
-- `caching=1` enables both embedding cache and short-TTL answer cache.
-- Response includes `intent` field showing detected question category.
+- `caching=1` enables both embedding cache and answer cache (30-day TTL, cleared on ingest).
+- Response includes `intent` and `behavior` fields showing the detected intent and response behavior.
+- List behaviors may return a `concreteDirective` object instead of a full LLM-generated answer.
 
 Response (excerpt):
 ```
