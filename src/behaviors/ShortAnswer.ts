@@ -28,21 +28,31 @@ export class ShortAnswer implements BehaviorHandler {
       };
     }
 
-    // Use only top 2 matches for quick response
-    const bestMatch = matches[0];
-    const metadata = (bestMatch.metadata || {}) as Record<string, unknown>;
+    // Use top 2 matches for quick response
+    const topMatches = matches.slice(0, 2);
+    const bestMatch = topMatches[0];
+    const bestMetadata = (bestMatch.metadata || {}) as Record<string, unknown>;
 
-    const title = (metadata.title as string) || "this page";
-    const url = (metadata.url as string) || (metadata.canonical as string) || "";
-    const preview = (metadata.preview as string) || "";
-    const collection = (metadata.collection as string) || "";
+    const title = (bestMetadata.title as string) || "this page";
+    const url = (bestMetadata.url as string) || (bestMetadata.canonical as string) || "";
 
-    // Build minimal context from metadata only
+    // Build minimal context from metadata of top 2 matches
     const contextParts: string[] = [];
-    if (title) contextParts.push(`Title: ${title}`);
-    if (url) contextParts.push(`URL: ${url}`);
-    if (preview) contextParts.push(`Summary: ${preview}`);
-    if (collection) contextParts.push(`Category: ${collection}`);
+
+    for (let i = 0; i < topMatches.length; i++) {
+      const match = topMatches[i];
+      const metadata = (match.metadata || {}) as Record<string, unknown>;
+      const matchTitle = (metadata.title as string) || "Untitled";
+      const matchUrl = (metadata.url as string) || (metadata.canonical as string) || "";
+      const matchPreview = (metadata.preview as string) || "";
+      const matchCollection = (metadata.collection as string) || "";
+
+      contextParts.push(`--- Source ${i + 1} ---`);
+      if (matchTitle) contextParts.push(`Title: ${matchTitle}`);
+      if (matchUrl) contextParts.push(`URL: ${matchUrl}`);
+      if (matchPreview) contextParts.push(`Summary: ${matchPreview}`);
+      if (matchCollection) contextParts.push(`Category: ${matchCollection}`);
+    }
 
     const systemPrompt = intent?.system_prompt ||
       `You are WORX AI. You MUST provide a VERY BRIEF answer.
@@ -55,7 +65,7 @@ Do not elaborate or provide extra details. Answer the question directly and stop
 Context:
 ${contextParts.join("\n")}
 
-Provide ONLY a 1-2 sentence answer with one link to ${url}. Be extremely brief.`;
+Provide ONLY a 1-2 sentence answer. Include a link to the most relevant source. Be extremely brief.`;
 
     // Use intent-specific model, fallback to site default, then system default
     const chatModel = intent?.chat_model || config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
@@ -78,17 +88,21 @@ Provide ONLY a 1-2 sentence answer with one link to ${url}. Be extremely brief.`
     const total_tokens = (usage?.total_tokens ??
       (tokens_input != null && tokens_output != null ? tokens_input + tokens_output : null)) as number | null;
 
+    // Build sources from top matches
+    const sources = topMatches.map((match) => {
+      const meta = (match.metadata || {}) as Record<string, unknown>;
+      return {
+        title: (meta.title as string) || "Untitled",
+        url: (meta.url as string) || (meta.canonical as string) || "",
+        score: match.score,
+      };
+    });
+
     return {
       answer: answer as string,
       behavior: this.name,
       intent: intent?.name || "quick_fact",
-      sources: [
-        {
-          title,
-          url,
-          score: bestMatch.score,
-        },
-      ],
+      sources,
       tokens_input,
       tokens_output,
       total_tokens,
