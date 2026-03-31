@@ -1,4 +1,5 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
+import { extractResponse } from "../utils/extractResponse";
 
 /**
  * NAVIGATION_HELP Behavior
@@ -76,7 +77,7 @@ Provide navigation guidance with the breadcrumb path and direct link.`;
     } as any);
 
     // Generate answer with navigation path
-    let answer = (chat as any).response as string;
+    let answer = extractResponse(chat) as string;
 
     // Fallback if LLM doesn't provide good answer
     if (!answer || answer.length < 20) {

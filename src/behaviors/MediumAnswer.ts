@@ -1,5 +1,6 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
 import { buildDocContext, normalizeUrl } from "../search/context";
+import { extractResponse } from "../utils/extractResponse";
 
 /**
  * MEDIUM_ANSWER Behavior
@@ -123,7 +124,7 @@ Write ONE paragraph (4-6 sentences) answering this question. Stop after one para
       max_tokens,
     } as any);
 
-    const answer = (chat as any).response ||
+    const answer = extractResponse(chat) ||
       "I couldn't locate that information in the current WORX content. Try a different phrasing or explore the site for more context.";
 
     // Extract token usage

@@ -1,5 +1,6 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
 import { buildDocContext, normalizeUrl } from "../search/context";
+import { extractResponse } from "../utils/extractResponse";
 
 /**
  * DETAILED_EXPLANATION Behavior
@@ -113,7 +114,7 @@ ${intentGuide}`.trim();
       max_tokens,
     } as any);
 
-    const answer = (chat as any).response ||
+    const answer = extractResponse(chat) ||
       "I couldn't find detailed information about that process.";
 
     const usage = (chat as any)?.usage || (chat as any)?.meta?.usage || {};

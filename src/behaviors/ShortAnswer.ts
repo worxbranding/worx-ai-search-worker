@@ -1,4 +1,5 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
+import { extractResponse } from "../utils/extractResponse";
 
 /**
  * SHORT_ANSWER Behavior
@@ -80,7 +81,7 @@ Provide ONLY a 1-2 sentence answer. Include a link to the most relevant source. 
       max_tokens: 150, // Reduced from 256 - force brevity
     } as any);
 
-    const answer = (chat as any).response || `For information about ${title}, visit [${title}](${url}).`;
+    const answer = extractResponse(chat) || `For information about ${title}, visit [${title}](${url}).`;
 
     const usage = (chat as any)?.usage || (chat as any)?.meta?.usage || {};
     const tokens_input = (usage?.input_tokens ?? usage?.prompt_tokens ?? usage?.inputTokens ?? null) as number | null;

@@ -73,7 +73,7 @@ export default {
 				await time("route:/admin/clear-cache", () => handleClearCache(req, env, ctx))
 			);
 		}
-      if (req.method === "GET" && pathname === "/debug/embed") {
+if (req.method === "GET" && pathname === "/debug/embed") {
         return withCors(originAllow, await time("route:/debug/embed", () => handleDebugEmbed(req, env, cfg!)));
       }
       if (req.method === "GET" && pathname === "/debug/query-by-id") {

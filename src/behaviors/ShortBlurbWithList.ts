@@ -1,4 +1,5 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
+import { extractResponse } from "../utils/extractResponse";
 
 /**
  * SHORT_BLURB_WITH_LIST Behavior
@@ -83,7 +84,7 @@ Provide ONLY a brief 1-2 sentence introduction. The actual list will be rendered
         max_tokens: 256, // Short blurb only
       } as any);
 
-      const answerText = ((chat as any).response || preview || `Here are the ${title.toLowerCase()}:`) as string;
+      const answerText = (extractResponse(chat) || preview || `Here are the ${title.toLowerCase()}:`) as string;
 
       return {
         answer: answerText.trim(),
@@ -131,7 +132,7 @@ Provide a brief answer with a link to ${url}.`;
       max_tokens: 384,
     } as any);
 
-    const answer = (chat as any).response || `For information about ${title}, visit ${url}`;
+    const answer = extractResponse(chat) || `For information about ${title}, visit ${url}`;
 
     return {
       answer: answer as string,

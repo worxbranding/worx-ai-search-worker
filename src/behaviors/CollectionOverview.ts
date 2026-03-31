@@ -1,4 +1,5 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
+import { extractResponse } from "../utils/extractResponse";
 
 /**
  * COLLECTION_OVERVIEW Behavior
@@ -82,7 +83,7 @@ Provide a high-level overview of this collection. DO NOT list individual items.`
       max_tokens: 512,
     } as any);
 
-    const answerText = ((chat as any).response || `${title} contains ${childrenCount} items.`) as string;
+    const answerText = (extractResponse(chat) || `${title} contains ${childrenCount} items.`) as string;
 
     // If this is an index with children and we have pageId, optionally include concreteDirective
     if (isIndex && childrenCount > 0 && pageId) {

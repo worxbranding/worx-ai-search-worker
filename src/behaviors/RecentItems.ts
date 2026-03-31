@@ -1,4 +1,5 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
+import { extractResponse } from "../utils/extractResponse";
 
 /**
  * RECENT_ITEMS Behavior
@@ -75,7 +76,7 @@ Provide ONLY a brief introduction mentioning that these are the most recent item
         max_tokens: 256,
       } as any);
 
-      const answerText = ((chat as any).response || `Here are the most recent ${title.toLowerCase()}:`) as string;
+      const answerText = (extractResponse(chat) || `Here are the most recent ${title.toLowerCase()}:`) as string;
 
       return {
         answer: answerText.trim(),
@@ -124,7 +125,7 @@ Provide information about recent items with a link.`;
       max_tokens: 384,
     } as any);
 
-    const answer = (chat as any).response || `For recent ${title.toLowerCase()}, visit [${title}](${url}).`;
+    const answer = extractResponse(chat) || `For recent ${title.toLowerCase()}, visit [${title}](${url}).`;
 
     const usage = (chat as any)?.usage || (chat as any)?.meta?.usage || {};
     const tokens_input = (usage?.input_tokens ?? usage?.prompt_tokens ?? usage?.inputTokens ?? null) as number | null;
