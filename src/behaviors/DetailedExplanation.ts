@@ -101,14 +101,8 @@ ${intentGuide}`.trim();
     // Use intent-specific model, fallback to site default, then system default
     const chatModel = intent?.chat_model || config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
     const temperature = config.search?.chat_temperature ?? 0.1;
-    // Allow up to 4096 tokens for detailed explanations
-    const configMaxTokens = Number(config.search?.max_output_tokens);
-    const max_tokens = isNaN(configMaxTokens) || configMaxTokens <= 0
-      ? 2048 // Default if not configured
-      : Math.min(4096, configMaxTokens); // Clamp to 4096 max
-
-    console.log("[DetailedExplanation] config.search?.max_output_tokens =", config.search?.max_output_tokens);
-    console.log("[DetailedExplanation] computed max_tokens =", max_tokens);
+    // Cap at 800 tokens - enough for numbered steps without being verbose
+    const max_tokens = Math.max(300, Math.min(800, Number(config.search?.max_output_tokens ?? 600)));
 
     const chat = await env.AI.run(chatModel as any, {
       messages: [

@@ -86,7 +86,7 @@ ${intentGuide}`.trim();
     // Use intent-specific model, fallback to site default, then system default
     const chatModel = intent?.chat_model || config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
     const temperature = config.search?.chat_temperature ?? 0.1;
-    const max_tokens = Math.max(256, Math.min(1024, Number(config.search?.max_output_tokens ?? 768)));
+    const max_tokens = Math.max(200, Math.min(500, Number(config.search?.max_output_tokens ?? 400)));
 
     const chat = await env.AI.run(chatModel as any, {
       messages: [

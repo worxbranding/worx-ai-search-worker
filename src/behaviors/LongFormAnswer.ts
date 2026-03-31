@@ -112,8 +112,8 @@ Write a comprehensive answer with 2-3 paragraphs. Be thorough and include multip
     // Use intent-specific model, fallback to site default, then system default
     const chatModel = intent?.chat_model || config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
     const temperature = config.search?.chat_temperature ?? 0.1;
-    // Use config value for long form - allow full responses (default: 800, but respect config)
-    const max_tokens = Math.max(400, Math.min(2048, Number(config.search?.max_output_tokens ?? 800)));
+    // Cap at 600 tokens for faster responses while still being comprehensive
+    const max_tokens = Math.max(300, Math.min(600, Number(config.search?.max_output_tokens ?? 500)));
 
     const chat = await env.AI.run(chatModel as any, {
       messages: [

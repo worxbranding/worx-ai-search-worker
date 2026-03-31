@@ -39,7 +39,8 @@ export function resolveCaching(url: URL, cfg: SiteConfig): boolean {
   const raw = (url.searchParams.get("caching") || "").trim();
   if (raw === "1") return true;
   if (raw === "0") return false;
-  return !!cfg.search?.caching;
+  // Default to true - caching should be on unless explicitly disabled
+  return cfg.search?.caching !== false;
 }
 
 /** Return the API key expected for search endpoints, if any. */
