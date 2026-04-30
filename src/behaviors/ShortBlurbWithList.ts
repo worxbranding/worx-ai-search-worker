@@ -1,5 +1,5 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
-import { extractResponse } from "../utils/extractResponse";
+import { runChat, resolveAnswerModel } from "../lib/llm";
 
 /**
  * SHORT_BLURB_WITH_LIST Behavior
@@ -71,20 +71,22 @@ Children Count: ${childrenCount}
 
 Provide ONLY a brief 1-2 sentence introduction. The actual list will be rendered separately.`;
 
-      // Use intent-specific model, fallback to site default, then system default
-      const chatModel = intent?.chat_model || config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
+      // Resolve provider+model via the multi-provider LlmClient
+      const answerModel = resolveAnswerModel(intent, config);
       const temperature = config.search?.chat_temperature ?? 0.1;
 
-      const chat = await env.AI.run(chatModel as any, {
+      const result = await runChat(env, {
+        provider: answerModel.provider,
+        model: answerModel.model,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
         temperature,
         max_tokens: 256, // Short blurb only
-      } as any);
+      });
 
-      const answerText = (extractResponse(chat) || preview || `Here are the ${title.toLowerCase()}:`) as string;
+      const answerText = (result.answer || preview || `Here are the ${title.toLowerCase()}:`) as string;
 
       return {
         answer: answerText.trim(),
@@ -119,20 +121,22 @@ Preview: ${preview}
 
 Provide a brief answer with a link to ${url}.`;
 
-    // Use intent-specific model, fallback to site default, then system default
-    const chatModel = intent?.chat_model || config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
+    // Resolve provider+model via the multi-provider LlmClient
+    const answerModel = resolveAnswerModel(intent, config);
     const temperature = config.search?.chat_temperature ?? 0.1;
 
-    const chat = await env.AI.run(chatModel as any, {
+    const result = await runChat(env, {
+      provider: answerModel.provider,
+      model: answerModel.model,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
       temperature,
       max_tokens: 384,
-    } as any);
+    });
 
-    const answer = extractResponse(chat) || `For information about ${title}, visit ${url}`;
+    const answer = result.answer || `For information about ${title}, visit ${url}`;
 
     return {
       answer: answer as string,

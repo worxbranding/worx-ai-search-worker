@@ -1,5 +1,5 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
-import { extractResponse } from "../utils/extractResponse";
+import { runChat, resolveAnswerModel } from "../lib/llm";
 
 /**
  * RECENT_ITEMS Behavior
@@ -63,20 +63,22 @@ Items: ${childrenCount}
 
 Provide ONLY a brief introduction mentioning that these are the most recent items.`;
 
-      // Use intent-specific model, fallback to site default, then system default
-      const chatModel = intent?.chat_model || config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
+      // Resolve provider+model via the multi-provider LlmClient
+      const answerModel = resolveAnswerModel(intent, config);
       const temperature = config.search?.chat_temperature ?? 0.1;
 
-      const chat = await env.AI.run(chatModel as any, {
+      const result = await runChat(env, {
+        provider: answerModel.provider,
+        model: answerModel.model,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
         temperature,
         max_tokens: 256,
-      } as any);
+      });
 
-      const answerText = (extractResponse(chat) || `Here are the most recent ${title.toLowerCase()}:`) as string;
+      const answerText = (result.answer || `Here are the most recent ${title.toLowerCase()}:`) as string;
 
       return {
         answer: answerText.trim(),
@@ -112,26 +114,24 @@ URL: ${url}
 
 Provide information about recent items with a link.`;
 
-    // Use intent-specific model, fallback to site default, then system default
-    const chatModel = intent?.chat_model || config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
+    // Resolve provider+model via the multi-provider LlmClient
+    const answerModel = resolveAnswerModel(intent, config);
     const temperature = config.search?.chat_temperature ?? 0.1;
 
-    const chat = await env.AI.run(chatModel as any, {
+    const result = await runChat(env, {
+      provider: answerModel.provider,
+      model: answerModel.model,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
       temperature,
       max_tokens: 384,
-    } as any);
+    });
 
-    const answer = extractResponse(chat) || `For recent ${title.toLowerCase()}, visit [${title}](${url}).`;
+    const answer = result.answer || `For recent ${title.toLowerCase()}, visit [${title}](${url}).`;
 
-    const usage = (chat as any)?.usage || (chat as any)?.meta?.usage || {};
-    const tokens_input = (usage?.input_tokens ?? usage?.prompt_tokens ?? usage?.inputTokens ?? null) as number | null;
-    const tokens_output = (usage?.output_tokens ?? usage?.completion_tokens ?? usage?.outputTokens ?? null) as number | null;
-    const total_tokens = (usage?.total_tokens ??
-      (tokens_input != null && tokens_output != null ? tokens_input + tokens_output : null)) as number | null;
+    const { tokens_input, tokens_output, total_tokens } = result.usage;
 
     return {
       answer: answer as string,
@@ -147,7 +147,9 @@ Provide information about recent items with a link.`;
       tokens_input,
       tokens_output,
       total_tokens,
-      model: chatModel,
+      model: answerModel.provider === "cloudflare"
+        ? answerModel.model
+        : `${answerModel.provider}/${answerModel.model}`,
       temperature,
     };
   }

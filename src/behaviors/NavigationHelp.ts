@@ -1,5 +1,5 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
-import { extractResponse } from "../utils/extractResponse";
+import { runChat, resolveAnswerModel } from "../lib/llm";
 
 /**
  * NAVIGATION_HELP Behavior
@@ -63,21 +63,23 @@ ${contextParts.join("\n")}
 
 Provide navigation guidance with the breadcrumb path and direct link.`;
 
-    // Use intent-specific model, fallback to site default, then system default
-    const chatModel = intent?.chat_model || config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
+    // Resolve provider+model via the multi-provider LlmClient
+    const answerModel = resolveAnswerModel(intent, config);
     const temperature = config.search?.chat_temperature ?? 0.1;
 
-    const chat = await env.AI.run(chatModel as any, {
+    const result = await runChat(env, {
+      provider: answerModel.provider,
+      model: answerModel.model,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
       temperature,
       max_tokens: 256,
-    } as any);
+    });
 
     // Generate answer with navigation path
-    let answer = extractResponse(chat) as string;
+    let answer = result.answer;
 
     // Fallback if LLM doesn't provide good answer
     if (!answer || answer.length < 20) {
@@ -91,11 +93,7 @@ Provide navigation guidance with the breadcrumb path and direct link.`;
       answer = parts.join(" ");
     }
 
-    const usage = (chat as any)?.usage || (chat as any)?.meta?.usage || {};
-    const tokens_input = (usage?.input_tokens ?? usage?.prompt_tokens ?? usage?.inputTokens ?? null) as number | null;
-    const tokens_output = (usage?.output_tokens ?? usage?.completion_tokens ?? usage?.outputTokens ?? null) as number | null;
-    const total_tokens = (usage?.total_tokens ??
-      (tokens_input != null && tokens_output != null ? tokens_input + tokens_output : null)) as number | null;
+    const { tokens_input, tokens_output, total_tokens } = result.usage;
 
     return {
       answer: answer.trim(),
@@ -111,7 +109,9 @@ Provide navigation guidance with the breadcrumb path and direct link.`;
       tokens_input,
       tokens_output,
       total_tokens,
-      model: chatModel,
+      model: answerModel.provider === "cloudflare"
+        ? answerModel.model
+        : `${answerModel.provider}/${answerModel.model}`,
       temperature,
     };
   }

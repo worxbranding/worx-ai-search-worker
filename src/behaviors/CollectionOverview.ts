@@ -1,5 +1,5 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
-import { extractResponse } from "../utils/extractResponse";
+import { runChat, resolveAnswerModel } from "../lib/llm";
 
 /**
  * COLLECTION_OVERVIEW Behavior
@@ -70,20 +70,22 @@ ${contextParts.join("\n")}
 
 Provide a high-level overview of this collection. DO NOT list individual items.`;
 
-    // Use intent-specific model, fallback to site default, then system default
-    const chatModel = intent?.chat_model || config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
+    // Resolve provider+model via the multi-provider LlmClient
+    const answerModel = resolveAnswerModel(intent, config);
     const temperature = config.search?.chat_temperature ?? 0.1;
 
-    const chat = await env.AI.run(chatModel as any, {
+    const result = await runChat(env, {
+      provider: answerModel.provider,
+      model: answerModel.model,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
       temperature,
       max_tokens: 512,
-    } as any);
+    });
 
-    const answerText = (extractResponse(chat) || `${title} contains ${childrenCount} items.`) as string;
+    const answerText = (result.answer || `${title} contains ${childrenCount} items.`) as string;
 
     // If this is an index with children and we have pageId, optionally include concreteDirective
     if (isIndex && childrenCount > 0 && pageId) {
@@ -107,11 +109,7 @@ Provide a high-level overview of this collection. DO NOT list individual items.`
     }
 
     // No concreteDirective - just the overview text
-    const usage = (chat as any)?.usage || (chat as any)?.meta?.usage || {};
-    const tokens_input = (usage?.input_tokens ?? usage?.prompt_tokens ?? usage?.inputTokens ?? null) as number | null;
-    const tokens_output = (usage?.output_tokens ?? usage?.completion_tokens ?? usage?.outputTokens ?? null) as number | null;
-    const total_tokens = (usage?.total_tokens ??
-      (tokens_input != null && tokens_output != null ? tokens_input + tokens_output : null)) as number | null;
+    const { tokens_input, tokens_output, total_tokens } = result.usage;
 
     return {
       answer: answerText.trim(),
@@ -127,7 +125,9 @@ Provide a high-level overview of this collection. DO NOT list individual items.`
       tokens_input,
       tokens_output,
       total_tokens,
-      model: chatModel,
+      model: answerModel.provider === "cloudflare"
+        ? answerModel.model
+        : `${answerModel.provider}/${answerModel.model}`,
       temperature,
     };
   }

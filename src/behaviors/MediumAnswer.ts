@@ -1,6 +1,6 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
 import { buildDocContext, normalizeUrl } from "../search/context";
-import { extractResponse } from "../utils/extractResponse";
+import { runChat, resolveAnswerModel } from "../lib/llm";
 
 /**
  * MEDIUM_ANSWER Behavior
@@ -109,30 +109,26 @@ ${contexts.join("\n\n")}
 
 Write ONE paragraph (4-6 sentences) answering this question. Stop after one paragraph.`;
 
-    // Run LLM
-    // Use intent-specific model, fallback to site default, then system default
-    const chatModel = intent?.chat_model || config.search?.chat_model || "@cf/meta/llama-3.1-8b-instruct";
+    // Run LLM via the multi-provider LlmClient
+    const answerModel = resolveAnswerModel(intent, config);
     const temperature = config.search?.chat_temperature ?? 0.1;
     const max_tokens = 300; // Fixed at 300 tokens for medium length
 
-    const chat = await env.AI.run(chatModel as any, {
+    const result = await runChat(env, {
+      provider: answerModel.provider,
+      model: answerModel.model,
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
       ],
       temperature,
       max_tokens,
-    } as any);
+    });
 
-    const answer = extractResponse(chat) ||
+    const answer = result.answer ||
       "I couldn't locate that information in the current WORX content. Try a different phrasing or explore the site for more context.";
 
-    // Extract token usage
-    const usage = (chat as any)?.usage || (chat as any)?.meta?.usage || {};
-    const tokens_input = (usage?.input_tokens ?? usage?.prompt_tokens ?? usage?.inputTokens ?? null) as number | null;
-    const tokens_output = (usage?.output_tokens ?? usage?.completion_tokens ?? usage?.outputTokens ?? null) as number | null;
-    const total_tokens = (usage?.total_tokens ??
-      (tokens_input != null && tokens_output != null ? tokens_input + tokens_output : null)) as number | null;
+    const { tokens_input, tokens_output, total_tokens } = result.usage;
 
     return {
       answer: answer as string,
@@ -146,7 +142,9 @@ Write ONE paragraph (4-6 sentences) answering this question. Stop after one para
       tokens_input,
       tokens_output,
       total_tokens,
-      model: chatModel,
+      model: answerModel.provider === "cloudflare"
+        ? answerModel.model
+        : `${answerModel.provider}/${answerModel.model}`,
       temperature,
     };
   }

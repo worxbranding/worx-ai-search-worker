@@ -28,7 +28,9 @@
   ],
 
   "vars": {
-    "ALLOWED_ORIGINS": "http://localhost:5173,http://localhost:3000"
+    "ALLOWED_ORIGINS": "http://localhost:5173,http://localhost:3000",
+    "AI_GATEWAY_ACCOUNT_ID": "659d1413091a90d93fa7097f2941b2cf",
+    "AI_GATEWAY_SLUG": "worx-ai"
   },
 
   "dev": {

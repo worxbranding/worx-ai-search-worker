@@ -43,6 +43,18 @@ export interface Env {
   WORX_AI_CONFIG: KVNamespace;
   WORX_AI_CONTENT: KVNamespace;
   ALLOWED_ORIGINS?: string;
+  AI_GATEWAY_ACCOUNT_ID?: string;
+  AI_GATEWAY_SLUG?: string;
+  OPENAI_API_KEY?: string;
+  ANTHROPIC_API_KEY?: string;
+}
+
+/** Multi-provider answer model selector. Stored per-site or per-intent. */
+export type LlmProvider = "cloudflare" | "openai" | "anthropic";
+
+export interface AnswerModel {
+  provider: LlmProvider;
+  model: string;
 }
 
 /** Custom intent configuration for the new behavior system. */
@@ -51,6 +63,7 @@ export interface CustomIntent {
   response_behavior: string;
   system_prompt?: string;
   chat_model?: string;
+  answer_model?: AnswerModel;
   priority: number;
   enabled?: boolean;
   detection: {
@@ -76,6 +89,7 @@ export type SiteConfig = {
     allowed_origins?: string[];
     api_key?: string;
     chat_model?: string;
+    answer_model?: AnswerModel;
     chat_temperature?: number;
     system_prompt?: string;
     topK?: number;
