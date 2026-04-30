@@ -59,7 +59,7 @@ export async function handleDebugQueryById(
   const k = Math.max(1, Math.min(24, Number.isFinite(kParsed) ? kParsed : 3));
   const useRaw = ["1", "true", "yes"].includes((url.searchParams.get("raw") || "").trim().toLowerCase());
   const forceDoc = ["1", "true", "yes"].includes((url.searchParams.get("doc") || "").trim().toLowerCase());
-  const wantCaching = resolveCaching(url, cfg);
+  const cache = resolveCaching(url, cfg, body);
   if (!site) {
     stop();
     return json({ ok: false, error: "Missing ?site=" }, { status: 400 });
@@ -136,7 +136,7 @@ export async function handleDebugQueryById(
         const txt = await env.CONTENT.get<string>(kvKey, "text");
         if (txt && txt.trim()) {
           const snippet = txt.slice(0, 3000);
-          const vec = await cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, snippet, undefined, wantCaching);
+          const vec = await cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, snippet, undefined, cache.embedding);
           // @ts-ignore Workers typing
           const out = await env.VECTORIZE.query(vec, { topK: k, returnMetadata: true, includeMetadata: true });
           const post = filterToSite(site, out?.matches || []);

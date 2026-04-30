@@ -33,7 +33,7 @@ export async function handleAsk(
   const stop = startTimer("handleAsk");
   const url = new URL(req.url);
   const wantDebug = (url.searchParams.get("debug") || "") === "1";
-  const wantCaching = resolveCaching(url, cfg);
+  const cache = resolveCaching(url, cfg, body);
 
   const site = (body.site || cfg.site_key || "").trim();
   const q = (body.q || "").trim();
@@ -54,7 +54,7 @@ export async function handleAsk(
     behaviorName,
     initial_topK,
     final_topK,
-  } = await executeSearchPipeline(q, site, cfg, env, ctx, wantCaching);
+  } = await executeSearchPipeline(q, site, cfg, env, ctx, cache);
 
   // Check cache before executing behavior
   const ansKeyRaw = JSON.stringify({
@@ -68,7 +68,7 @@ export async function handleAsk(
   });
   const ansKey = `ans:${await sha1Hex(ansKeyRaw)}`;
 
-  if (wantCaching) {
+  if (cache.answer) {
     try {
       const cachedRaw = await env.CACHE.get<string>(ansKey, "text");
       if (cachedRaw && cachedRaw.trim()) {
@@ -138,7 +138,7 @@ export async function handleAsk(
   // Cache the response
   // Default: 30 days (2592000s). Will be cleared on ingest for fresh answers.
   const ansTtl = Math.max(60, Math.min(31536000, Number(cfg.search?.answer_cache_ttl ?? 2592000)));
-  if (wantCaching) {
+  if (cache.answer) {
     try {
       const cacheValue = JSON.stringify(behaviorResponse);
       if (ctx?.waitUntil && env.CACHE.put) {

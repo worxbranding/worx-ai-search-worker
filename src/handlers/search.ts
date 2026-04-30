@@ -20,7 +20,7 @@ export async function handleSearch(
   const url = new URL(req.url);
   const site = (body.site || cfg.site_key || "").trim();
   const q = (body.q || url.searchParams.get("q") || "").trim();
-  const wantCaching = resolveCaching(url, cfg);
+  const cache = resolveCaching(url, cfg, body);
 
   if (!site) {
     stop();
@@ -41,7 +41,7 @@ export async function handleSearch(
     allKeywords,
     initial_topK,
     final_topK,
-  } = await executeSearchPipeline(q, site, cfg, env, ctx, wantCaching);
+  } = await executeSearchPipeline(q, site, cfg, env, ctx, cache);
 
   // Build response with detailed pipeline info
   const responseBody: Record<string, unknown> = {

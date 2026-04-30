@@ -26,7 +26,7 @@ export async function executeSearchPipeline(
   cfg: SiteConfig,
   env: Env,
   ctx: ExecutionContext | undefined,
-  wantCaching: boolean
+  cache: { answer: boolean; embedding: boolean }
 ): Promise<{
   matches: SearchMatch[];
   intent: CustomIntent;
@@ -60,7 +60,7 @@ export async function executeSearchPipeline(
   // Generate embedding and run vector search
   const embedTtl = Math.max(86400, Math.min(31536000, Number(cfg.search?.embed_cache_ttl ?? 7776000)));
   const vector = await time("cachedEmbed", () =>
-    cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, query, ctx, wantCaching, embedTtl, site)
+    cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, query, ctx, cache.embedding, embedTtl, site)
   );
 
   // @ts-ignore Workers typing for VECTORIZE.query is permissive

@@ -37,6 +37,19 @@ export interface InBandRequestBody {
   search?: InBandSearchOverrides;
   intents?: CustomIntent[];
   default_behavior?: string;
+  /**
+   * Per-request cache controls. Either send `caching` for both layers,
+   * or split with `cache_answer` / `cache_embedding`. The split fields
+   * win over the single one — used by the Training tab to keep the
+   * embedding cache hot while forcing fresh LLM calls.
+   */
+  cache_answer?: boolean;
+  cache_embedding?: boolean;
+}
+
+export interface CacheFlags {
+  answer: boolean;
+  embedding: boolean;
 }
 
 /**
@@ -87,14 +100,23 @@ export function allowOrigin(origin: string | null, env: Env): string | null {
 }
 
 /**
- * Decide whether caching is enabled for a given request. Query string toggles
- * take precedence over stored configuration; default = on unless body says off.
+ * Decide whether the answer + embedding caches are enabled for a given
+ * request, in priority order: body.cache_answer/cache_embedding (split)
+ * → ?caching=0|1 query string (legacy) → cfg.search.caching → default on.
+ *
+ * The split fields exist so the Training tab can keep the embedding cache
+ * hot while forcing the LLM to re-run on every "Try again."
  */
-export function resolveCaching(url: URL, cfg: SiteConfig): boolean {
-  const raw = (url.searchParams.get("caching") || "").trim();
-  if (raw === "1") return true;
-  if (raw === "0") return false;
-  return cfg.search?.caching !== false;
+export function resolveCaching(url: URL, cfg: SiteConfig, body?: InBandRequestBody): CacheFlags {
+  const fallback = cfg.search?.caching !== false;
+  const queryRaw = (url.searchParams.get("caching") || "").trim();
+  const querySays: boolean | null = queryRaw === "1" ? true : queryRaw === "0" ? false : null;
+  const baseAll = querySays ?? fallback;
+
+  return {
+    answer:    typeof body?.cache_answer === "boolean"    ? body.cache_answer    : baseAll,
+    embedding: typeof body?.cache_embedding === "boolean" ? body.cache_embedding : baseAll,
+  };
 }
 
 /** Guard the vector topK value so callers cannot request outrageous limits. */
