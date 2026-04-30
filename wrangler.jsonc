@@ -13,15 +13,18 @@
 
   "ai": { "binding": "AI" },
 
-  // 👇 Add CONFIG KV with both prod id and preview_id
+  // KV bindings — split by purpose. CACHE holds ans:* + qemb:* (best-effort cache).
+  // CONTENT holds doc:* text chunks the search worker reads to build context.
+  // (Both currently point at the legacy namespaces; cfg:* keys living in CACHE
+  // are no longer read and will be cleared in Phase 2.7.)
   "kv_namespaces": [
     {
-      "binding": "WORX_AI_CONFIG",
+      "binding": "CACHE",
       "id": "b7cccd00ce024ecaac6f69ddbf1d1140",
       "preview_id": "21fcb0c230de4f2ba50c339ad92e7949"
     },
     {
-      "binding": "WORX_AI_CONTENT",
+      "binding": "CONTENT",
       "id": "c8e9cf82653944a585c223917c70ebc8",
       "preview_id": "dd39795828984709847726014f1c7e69"
     }
@@ -30,7 +33,13 @@
   "vars": {
     "ALLOWED_ORIGINS": "http://localhost:5173,http://localhost:3000",
     "AI_GATEWAY_ACCOUNT_ID": "659d1413091a90d93fa7097f2941b2cf",
-    "AI_GATEWAY_SLUG": "worx-ai"
+    "AI_GATEWAY_SLUG": "worx-ai",
+    // Deploy-time constants that used to live in cfg:<site>. Vectorize index
+    // is dimension-locked once created; embed_model must match what the
+    // index was populated with.
+    "EMBED_MODEL": "@cf/baai/bge-large-en-v1.5",
+    "VECTORIZE_DIMS": "1024",
+    "VECTORIZE_METRIC": "cosine"
   },
 
   "dev": {

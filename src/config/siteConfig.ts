@@ -1,31 +1,86 @@
-import { json } from "../http/response";
-import type { Env, SiteConfig } from "../lib/types";
+import type { CustomIntent, Env, SiteConfig } from "../lib/types";
 
 /**
- * Load the site configuration document from KV and perform a couple of sanity
- * checks so downstream code can assume required fields exist.
+ * Build the SiteConfig object the rest of the worker expects out of:
+ *
+ *   - environment-level wrangler vars (vectorize index/dims/metric, embed model)
+ *   - the in-band request body posted by the CMS (search behaviour + intents)
+ *
+ * Per-site state used to live in a `cfg:<site>` KV row; that path is gone.
+ * The `site` value is now just a routing key (used for Vectorize metadata
+ * filtering and KV cache key prefixing), not authentication — auth happens
+ * via HMAC at the entry point before this is ever called.
  */
-export async function loadSiteConfig(env: Env, site: string): Promise<SiteConfig> {
-  const key = `cfg:${site}`;
-  const cfg = await env.WORX_AI_CONFIG.get<SiteConfig>(key, "json");
-  if (!cfg) throw new Error(`Missing CONFIG KV entry for ${key}`);
-  if (!cfg.vectorize?.dims) throw new Error(`CONFIG ${key} missing vectorize.dims`);
-  if (!cfg.ai?.embed_model) throw new Error(`CONFIG ${key} missing ai.embed_model`);
-  return cfg;
+export interface InBandSearchOverrides {
+  system_prompt?: string;
+  answer_model?: SiteConfig["search"] extends infer S
+    ? (S extends { answer_model?: infer A } ? A : never)
+    : never;
+  chat_temperature?: number;
+  initial_topK?: number;
+  final_topK?: number;
+  topK?: number;
+  max_output_tokens?: number;
+  max_context_docs?: number;
+  max_kv_text_chars?: number;
+  caching?: boolean;
+  embed_cache_ttl?: number;
+  answer_cache_ttl?: number;
+  /** Legacy single-string model — promoted to answer_model.cloudflare. */
+  chat_model?: string;
+}
+
+export interface InBandRequestBody {
+  q?: string;
+  site?: string;
+  k?: number;
+  search?: InBandSearchOverrides;
+  intents?: CustomIntent[];
+  default_behavior?: string;
 }
 
 /**
- * Pick an allowed CORS origin by combining site-level overrides and package
- * defaults. Returns null when nothing should be appended to the response.
+ * Construct the per-request SiteConfig from env vars + posted body. This
+ * object is read-only inside the worker; mutating it has no effect on
+ * persisted state because nothing is persisted any more.
  */
-export function allowOrigin(origin: string | null, cfg: SiteConfig, env: Env): string | null {
-  const fromCfg = cfg.search?.allowed_origins || [];
-  let allowed = fromCfg.length
-    ? fromCfg
-    : (env.ALLOWED_ORIGINS || "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
+export function buildSiteConfig(env: Env, site: string, body: InBandRequestBody): SiteConfig {
+  const dims = parseInt(env.VECTORIZE_DIMS || "0", 10);
+  if (!dims || !Number.isFinite(dims)) {
+    throw new Error("VECTORIZE_DIMS env var is missing or not a number");
+  }
+  if (!env.EMBED_MODEL) {
+    throw new Error("EMBED_MODEL env var is required");
+  }
+
+  const metric = (env.VECTORIZE_METRIC || "cosine") as SiteConfig["vectorize"]["metric"];
+
+  return {
+    site_key: site,
+    vectorize: {
+      index_name: "worx-ai-index", // pinned by wrangler binding; surfaced for /status only
+      dims,
+      metric,
+    },
+    ai: {
+      embed_model: env.EMBED_MODEL,
+    },
+    custom_intents: Array.isArray(body.intents) ? body.intents : [],
+    default_behavior: body.default_behavior,
+    search: body.search ?? {},
+  };
+}
+
+/**
+ * Pick an allowed CORS origin from the wrangler ALLOWED_ORIGINS list.
+ * (Per-site CORS is owned by the CMS in front of the worker; this list is
+ * just a defence-in-depth fallback for direct browser/CLI calls.)
+ */
+export function allowOrigin(origin: string | null, env: Env): string | null {
+  const allowed = (env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (!origin) return null;
   if (allowed.includes("*")) return "*";
   return allowed.includes(origin) ? origin : null;
@@ -33,31 +88,13 @@ export function allowOrigin(origin: string | null, cfg: SiteConfig, env: Env): s
 
 /**
  * Decide whether caching is enabled for a given request. Query string toggles
- * take precedence over stored configuration, defaulting to false.
+ * take precedence over stored configuration; default = on unless body says off.
  */
 export function resolveCaching(url: URL, cfg: SiteConfig): boolean {
   const raw = (url.searchParams.get("caching") || "").trim();
   if (raw === "1") return true;
   if (raw === "0") return false;
-  // Default to true - caching should be on unless explicitly disabled
   return cfg.search?.caching !== false;
-}
-
-/** Return the API key expected for search endpoints, if any. */
-export function wantApiKey(cfg: SiteConfig): string {
-  return (cfg.search?.api_key || cfg.api_key || "").trim();
-}
-
-/**
- * Enforce the API key header when a key is configured. Returns a response that
- * callers can send directly when the key is missing or incorrect.
- */
-export async function requireApiKey(req: Request, cfg: SiteConfig): Promise<Response | null> {
-  const want = wantApiKey(cfg);
-  if (!want) return null;
-  const got = (req.headers.get("x-api-key") || "").trim();
-  if (got === want) return null;
-  return json({ ok: false, error: "API key required or invalid" }, { status: 401 });
 }
 
 /** Guard the vector topK value so callers cannot request outrageous limits. */
@@ -87,10 +124,7 @@ export function resolveTopKFromQuery(url: URL, fallback: number): number {
   return clampTopK(fallback);
 }
 
-/**
- * Keep the chat temperature within the model's supported bounds while allowing
- * per-request overrides.
- */
+/** Keep the chat temperature within the model's supported bounds. */
 export function clampTemperature(value: number, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;
   return Math.min(1, Math.max(0, Number(value)));

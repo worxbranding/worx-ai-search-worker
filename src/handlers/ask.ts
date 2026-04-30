@@ -1,9 +1,8 @@
 import { json } from "../http/response";
 import { log, startTimer, time } from "../lib/logging";
-import { clampTemperature, resolveCaching } from "../config/siteConfig";
+import { resolveCaching, type InBandRequestBody } from "../config/siteConfig";
 import { getBehavior } from "../behaviors";
 import type { BehaviorResponse } from "../behaviors";
-import { ensureMarkdown } from "../search/context";
 import { sha1Hex } from "../utils/crypto";
 import { isNoAnswer } from "../utils/isNoAnswer";
 import { executeSearchPipeline } from "../search/pipeline";
@@ -20,11 +19,14 @@ import type { Env, ExecutionContext, SiteConfig } from "../lib/types";
  * 4. Re-rank results based on intent metadata (if detected)
  * 5. Execute appropriate behavior
  * 6. Cache response if enabled
+ *
+ * Body has already been HMAC-verified and JSON-parsed by the entry point.
  */
 export async function handleAsk(
   req: Request,
   env: Env,
   cfg: SiteConfig,
+  body: InBandRequestBody,
   ctx?: ExecutionContext
 ): Promise<Response> {
   const stop = startTimer("handleAsk");
@@ -32,18 +34,7 @@ export async function handleAsk(
   const wantDebug = (url.searchParams.get("debug") || "") === "1";
   const wantCaching = resolveCaching(url, cfg);
 
-  const body = (await req.json().catch(() => ({}))) as {
-    site?: string;
-    q?: string;
-    k?: number;
-    systemPrompt?: string;
-    system_prompt?: string;
-    chatTemperature?: number;
-    temperature?: number;
-    chat_temperature?: number;
-  };
-
-  const site = (body.site || "").trim();
+  const site = (body.site || cfg.site_key || "").trim();
   const q = (body.q || "").trim();
 
   if (!site) {
@@ -78,7 +69,7 @@ export async function handleAsk(
 
   if (wantCaching) {
     try {
-      const cachedRaw = await env.WORX_AI_CONFIG.get<string>(ansKey, "text");
+      const cachedRaw = await env.CACHE.get<string>(ansKey, "text");
       if (cachedRaw && cachedRaw.trim()) {
         const cachedResponse = JSON.parse(cachedRaw) as BehaviorResponse;
         log("[cachedAnswer] HIT", ansKey);
@@ -145,11 +136,11 @@ export async function handleAsk(
   if (wantCaching) {
     try {
       const cacheValue = JSON.stringify(behaviorResponse);
-      if (ctx?.waitUntil && env.WORX_AI_CONFIG.put) {
-        ctx.waitUntil(env.WORX_AI_CONFIG.put(ansKey, cacheValue, { expirationTtl: ansTtl, metadata: { site } }));
+      if (ctx?.waitUntil && env.CACHE.put) {
+        ctx.waitUntil(env.CACHE.put(ansKey, cacheValue, { expirationTtl: ansTtl, metadata: { site } }));
         log("[cachedAnswer] STORE-QUEUED", ansKey, `ttl=${ansTtl}`, `site=${site}`);
-      } else if (env.WORX_AI_CONFIG.put) {
-        await env.WORX_AI_CONFIG.put(ansKey, cacheValue, { expirationTtl: ansTtl, metadata: { site } });
+      } else if (env.CACHE.put) {
+        await env.CACHE.put(ansKey, cacheValue, { expirationTtl: ansTtl, metadata: { site } });
         log("[cachedAnswer] STORED", ansKey, `ttl=${ansTtl}`, `site=${site}`);
       }
     } catch (error) {

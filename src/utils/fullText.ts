@@ -24,7 +24,7 @@ export async function fetchFullTextForMatches(
     }
 
     try {
-      const txt = await env.WORX_AI_CONTENT.get<string>(String(kvKey), "text");
+      const txt = await env.CONTENT.get<string>(String(kvKey), "text");
       if (!txt || !txt.trim()) {
         log("[FullText] Empty text for:", match.id);
         return { ...match, _fullText: null };

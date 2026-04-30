@@ -196,7 +196,7 @@ export async function buildDocContext(
 
   if (!txt && kvKey) {
     // Fallback: fetch from KV if not already provided
-    txt = await env.WORX_AI_CONTENT.get<string>(String(kvKey), "text");
+    txt = await env.CONTENT.get<string>(String(kvKey), "text");
   }
 
   if (txt && txt.trim()) {

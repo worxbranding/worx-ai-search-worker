@@ -40,13 +40,25 @@ export interface KVNamespace {
 export interface Env {
   VECTORIZE: VectorizeIndex;
   AI: Ai;
-  WORX_AI_CONFIG: KVNamespace;
-  WORX_AI_CONTENT: KVNamespace;
+  /** Optional response/embedding cache. Reads are best-effort; never fatal. */
+  CACHE: KVNamespace;
+  /** Pre-ingested document text chunks (read-only on the search side). */
+  CONTENT: KVNamespace;
+  /** Embedding model id used for queries — must match the indexed corpus. */
+  EMBED_MODEL: string;
+  /** Vectorize embedding dims. Stored as string because wrangler vars are strings. */
+  VECTORIZE_DIMS: string;
+  /** Vectorize distance metric (defaults to "cosine" if unset). */
+  VECTORIZE_METRIC?: string;
   ALLOWED_ORIGINS?: string;
   AI_GATEWAY_ACCOUNT_ID?: string;
   AI_GATEWAY_SLUG?: string;
   OPENAI_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
+  /** Current HMAC shared secret. Required. */
+  WORX_HMAC_SECRET: string;
+  /** Optional previous HMAC secret accepted during rotation overlap. */
+  WORX_HMAC_SECRET_PREVIOUS?: string;
 }
 
 /** Multi-provider answer model selector. Stored per-site or per-intent. */

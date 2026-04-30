@@ -126,7 +126,7 @@ export async function cachedEmbed(
   }
 
   try {
-    const cached = await env.WORX_AI_CONFIG.get<number[]>(key, "json");
+    const cached = await env.CACHE.get<number[]>(key, "json");
     if (cached && Array.isArray(cached) && cached.length === dims) {
       log("[cachedEmbed] HIT", key);
       return cached;
@@ -140,12 +140,12 @@ export async function cachedEmbed(
 
   try {
     const metadata = site ? { site } : undefined;
-    if (ctx?.waitUntil && env.WORX_AI_CONFIG.put) {
-      ctx.waitUntil(env.WORX_AI_CONFIG.put(key, JSON.stringify(embedding), { expirationTtl: embedTtl, metadata }));
+    if (ctx?.waitUntil && env.CACHE.put) {
+      ctx.waitUntil(env.CACHE.put(key, JSON.stringify(embedding), { expirationTtl: embedTtl, metadata }));
       log("[cachedEmbed] STORE-QUEUED", key, `ttl=${embedTtl}`, site ? `site=${site}` : "(no site)");
-    } else if (env.WORX_AI_CONFIG.put) {
+    } else if (env.CACHE.put) {
       const stop = startTimer("KV put qemb");
-      await env.WORX_AI_CONFIG.put(key, JSON.stringify(embedding), { expirationTtl: embedTtl, metadata });
+      await env.CACHE.put(key, JSON.stringify(embedding), { expirationTtl: embedTtl, metadata });
       stop();
       log("[cachedEmbed] STORED", key, `ttl=${embedTtl}`, site ? `site=${site}` : "(no site)");
     }

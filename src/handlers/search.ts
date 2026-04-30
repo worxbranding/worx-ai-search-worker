@@ -1,27 +1,25 @@
 import { json } from "../http/response";
 import { startTimer } from "../lib/logging";
-import { resolveCaching } from "../config/siteConfig";
+import { resolveCaching, type InBandRequestBody } from "../config/siteConfig";
 import { executeSearchPipeline } from "../search/pipeline";
 import type { Env, ExecutionContext, SiteConfig } from "../lib/types";
 
 /**
  * Vector search endpoint with preview/debug mode.
- * This endpoint mirrors the /ask logic but stops before calling the LLM.
- *
- * Purpose: Let users preview search results, re-ranking, and context
- * before executing the full /ask pipeline.
+ * Mirrors /ask but stops before calling the LLM. Body has already been
+ * HMAC-verified and parsed by the entry point.
  */
 export async function handleSearch(
   req: Request,
   env: Env,
   cfg: SiteConfig,
+  body: InBandRequestBody,
   ctx?: ExecutionContext
 ): Promise<Response> {
   const stop = startTimer("handleSearch");
   const url = new URL(req.url);
-  const site = (url.searchParams.get("site") || "").trim();
-  const q = (url.searchParams.get("q") || "").trim();
-  const wantDebug = (url.searchParams.get("debug") || "") === "1";
+  const site = (body.site || cfg.site_key || "").trim();
+  const q = (body.q || url.searchParams.get("q") || "").trim();
   const wantCaching = resolveCaching(url, cfg);
 
   if (!site) {
@@ -46,7 +44,7 @@ export async function handleSearch(
   } = await executeSearchPipeline(q, site, cfg, env, ctx, wantCaching);
 
   // Build response with detailed pipeline info
-  const body: Record<string, unknown> = {
+  const responseBody: Record<string, unknown> = {
     ok: true,
     site,
     q,
@@ -95,5 +93,5 @@ export async function handleSearch(
   };
 
   stop();
-  return json(body);
+  return json(responseBody);
 }

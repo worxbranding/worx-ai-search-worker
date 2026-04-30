@@ -1,6 +1,6 @@
 import { json } from "../http/response";
 import { log, startTimer, time } from "../lib/logging";
-import { resolveCaching } from "../config/siteConfig";
+import { resolveCaching, type InBandRequestBody } from "../config/siteConfig";
 import {
   cachedEmbed,
   embed,
@@ -14,14 +14,15 @@ import type { Env, SiteConfig } from "../lib/types";
 export async function handleDebugEmbed(
   req: Request,
   env: Env,
-  cfg: SiteConfig
+  cfg: SiteConfig,
+  body: InBandRequestBody
 ): Promise<Response> {
   const stop = startTimer("handleDebugEmbed");
   const url = new URL(req.url);
-  const q = (url.searchParams.get("q") || "").trim();
+  const q = (body.q || url.searchParams.get("q") || "").trim();
   if (!q) {
     stop();
-    return json({ ok: false, error: "Missing ?q=" }, { status: 400 });
+    return json({ ok: false, error: "Missing field 'q'" }, { status: 400 });
   }
   try {
     const arr = await embed(env, cfg.ai.embed_model, cfg.vectorize.dims, q);
@@ -45,11 +46,12 @@ export async function handleDebugEmbed(
 export async function handleDebugQueryById(
   req: Request,
   env: Env,
-  cfg: SiteConfig
+  cfg: SiteConfig,
+  body: InBandRequestBody
 ): Promise<Response> {
   const stop = startTimer("handleDebugQueryById");
   const url = new URL(req.url);
-  const site = (url.searchParams.get("site") || "").trim();
+  const site = (body.site || cfg.site_key || url.searchParams.get("site") || "").trim();
   const idRaw = (url.searchParams.get("id") || "").trim();
   const kRaw = (url.searchParams.get("k") || "").trim();
   const kDigits = kRaw.match(/\d+/)?.[0] || "";
@@ -131,7 +133,7 @@ export async function handleDebugQueryById(
 
     for (const kvKey of kvCandidates) {
       try {
-        const txt = await env.WORX_AI_CONTENT.get<string>(kvKey, "text");
+        const txt = await env.CONTENT.get<string>(kvKey, "text");
         if (txt && txt.trim()) {
           const snippet = txt.slice(0, 3000);
           const vec = await cachedEmbed(env, cfg.ai.embed_model, cfg.vectorize.dims, snippet, undefined, wantCaching);
@@ -188,13 +190,13 @@ export async function handleDebugListIds(
     stop();
     return json({ ok: false, error: "Missing ?site=" }, { status: 400 });
   }
-  if (!env.WORX_AI_CONTENT.list) {
+  if (!env.CONTENT.list) {
     stop();
     return json({ ok: false, error: "CONTENT KV does not support list() in this environment" }, { status: 501 });
   }
 
   const prefix = `doc:${site}:`;
-  const page = await time(`KV list ${prefix}`, () => env.WORX_AI_CONTENT.list!({ prefix, limit, cursor }));
+  const page = await time(`KV list ${prefix}`, () => env.CONTENT.list!({ prefix, limit, cursor }));
   const names = (page.keys || []).map((k) => k.name);
   const idsPrefixed = names.map((n) => (n.startsWith("doc:") ? n.slice(4) : n));
   const idsStripped = idsPrefixed.map((v) => (v.startsWith(`${site}:`) ? v.slice(site.length + 1) : v));
