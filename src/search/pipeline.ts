@@ -46,9 +46,14 @@ export async function executeSearchPipeline(
     log("[Intent] Detected via keywords:", detectedIntent.name);
   }
 
-  // Prepare vector search with two-stage filtering
-  const initial_topK = Number(cfg.search?.initial_topK ?? 15);
-  const final_topK = Number(cfg.search?.final_topK ?? 3);
+  // Prepare vector search with two-stage filtering. Per-intent overrides
+  // take precedence when present — keyword-pre-detected intent overrides
+  // initial_topK before the fetch; the final intent (whether keyword or
+  // metadata-detected) overrides final_topK at slice time below.
+  const initial_topK = Number(
+    (detectedIntent?.initial_topK !== undefined ? detectedIntent.initial_topK : cfg.search?.initial_topK) ?? 15
+  );
+  let final_topK = Number(cfg.search?.final_topK ?? 3);
 
   log("[TopK] initial_topK:", initial_topK, "final_topK:", final_topK);
 
@@ -76,6 +81,13 @@ export async function executeSearchPipeline(
   // Use detected intent or fall back to default
   const intent = detectedIntent || getDefaultIntent();
   const behaviorName = intent.response_behavior || cfg.default_behavior || "long_form_answer";
+
+  // Apply intent's final_topK override if set (post-detection refinement
+  // — works whether the intent came from keyword or metadata detection).
+  if (intent.final_topK !== undefined) {
+    final_topK = Number(intent.final_topK);
+    log("[TopK] final_topK overridden by intent:", intent.name, "->", final_topK);
+  }
 
   // Extract keywords from query
   const queryKeywords = extractKeywords(query);

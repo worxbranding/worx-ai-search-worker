@@ -6,6 +6,7 @@ import type { BehaviorResponse } from "../behaviors";
 import { sha1Hex } from "../utils/crypto";
 import { isNoAnswer } from "../utils/isNoAnswer";
 import { executeSearchPipeline } from "../search/pipeline";
+import { mergeIntentTuning } from "../lib/llm";
 import type { Env, ExecutionContext, SiteConfig } from "../lib/types";
 
 
@@ -118,14 +119,18 @@ export async function handleAsk(
     }
   }
 
-  // Execute behavior with sliced results
+  // Execute behavior with sliced results. Per-intent tuning overrides
+  // (chat_temperature, topK, max_*, etc.) are merged into config.search
+  // here so behaviors can keep reading config.search.* without caring
+  // whether the value came from the intent or the site row.
+  const cfgForBehavior = mergeIntentTuning(cfg, intent);
   const behavior = getBehavior(behaviorName);
   const behaviorResponse = await time("behavior.execute", () =>
     behavior.execute({
       query: q,
       matches: finalMatches,
       intent,
-      config: cfg,
+      config: cfgForBehavior,
       env,
     })
   );

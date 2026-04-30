@@ -32,6 +32,31 @@ const DEFAULT_ANSWER_MODEL: AnswerModel = {
 };
 
 /**
+ * Merge per-intent tuning overrides on top of site-level config.search, so
+ * downstream behaviors only need to read `config.search.*` and get the
+ * resolved value. Returns a new SiteConfig — original is not mutated.
+ *
+ * Per-intent fields supported: chat_temperature, initial_topK, final_topK,
+ * max_output_tokens, max_context_docs, max_kv_text_chars. answer_model
+ * stays handled by resolveAnswerModel because it has its own resolution
+ * chain (intent.answer_model → intent.chat_model → cfg.search.answer_model).
+ */
+export function mergeIntentTuning(
+  config: SiteConfig,
+  intent: CustomIntent | null | undefined,
+): SiteConfig {
+  if (!intent) return config;
+  const search = { ...(config.search ?? {}) };
+  if (intent.chat_temperature   !== undefined) search.chat_temperature   = intent.chat_temperature;
+  if (intent.initial_topK       !== undefined) search.initial_topK       = intent.initial_topK;
+  if (intent.final_topK         !== undefined) search.final_topK         = intent.final_topK;
+  if (intent.max_output_tokens  !== undefined) search.max_output_tokens  = intent.max_output_tokens;
+  if (intent.max_context_docs   !== undefined) search.max_context_docs   = intent.max_context_docs;
+  if (intent.max_kv_text_chars  !== undefined) search.max_kv_text_chars  = intent.max_kv_text_chars;
+  return { ...config, search };
+}
+
+/**
  * Resolve which provider+model to use for a given request, applying the
  * intent override → site config → built-in default fallback chain.
  *

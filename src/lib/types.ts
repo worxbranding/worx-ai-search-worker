@@ -78,6 +78,13 @@ export interface CustomIntent {
   answer_model?: AnswerModel;
   priority: number;
   enabled?: boolean;
+  /** Per-intent tuning overrides — undefined = inherit site default. */
+  chat_temperature?: number;
+  initial_topK?: number;
+  final_topK?: number;
+  max_output_tokens?: number;
+  max_context_docs?: number;
+  max_kv_text_chars?: number;
   detection: {
     keywords?: string[];
     metadata_matches?: {
