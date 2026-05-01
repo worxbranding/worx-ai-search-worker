@@ -75,15 +75,19 @@ async function kvDeleteByPrefix(
 export async function handleClearCache(
 	req: Request,
 	env: Env,
+	body: { scope?: string; site?: string } | undefined,
 	ctx?: ExecutionContext
 ): Promise<Response> {
+  // Body is parsed once by the entry point (HMAC reads the raw bytes there);
+  // passing it back in here avoids the "stream already consumed" bug where
+  // req.json() returns {} and scope silently defaults to "answers".
   const stop = startTimer("handleClearCache");
   const url = new URL(req.url);
   const qsScope = (url.searchParams.get("scope") || "").trim();
   const qsSite = (url.searchParams.get("site") || "").trim();
-  const body = (await req.json().catch(() => ({}))) as { scope?: string; site?: string };
-  const scope = String(body.scope || qsScope || "answers").toLowerCase();
-  const site = String(body.site || qsSite || "").trim();
+  const b = body ?? {};
+  const scope = String(b.scope || qsScope || "answers").toLowerCase();
+  const site = String(b.site || qsSite || "").trim();
 
   if (!env.CACHE.list || !env.CACHE.delete) {
     stop();

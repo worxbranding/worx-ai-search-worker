@@ -87,7 +87,9 @@ export default {
       if (req.method === "POST" && pathname === "/admin/clear-cache") {
         return withCors(
           originAllow,
-          await time("route:/admin/clear-cache", () => handleClearCache(req, env, ctx))
+          await time("route:/admin/clear-cache", () =>
+            handleClearCache(req, env, body as any, ctx)
+          )
         );
       }
       if (req.method === "POST" && pathname === "/debug/embed") {

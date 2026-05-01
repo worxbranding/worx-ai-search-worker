@@ -13,20 +13,17 @@
 
   "ai": { "binding": "AI" },
 
-  // KV bindings — split by purpose. CACHE holds ans:* + qemb:* (best-effort cache).
-  // CONTENT holds doc:* text chunks the search worker reads to build context.
-  // (Both currently point at the legacy namespaces; cfg:* keys living in CACHE
-  // are no longer read and will be cleared in Phase 2.7.)
+  // KV bindings: CACHE holds ans:* + qemb:* (search worker's answer + embedding
+  // cache). CONTENT holds doc:* text chunks the search worker reads to build
+  // RAG context. Both written by the ingest worker; both read by search.
   "kv_namespaces": [
     {
       "binding": "CACHE",
-      "id": "b7cccd00ce024ecaac6f69ddbf1d1140",
-      "preview_id": "21fcb0c230de4f2ba50c339ad92e7949"
+      "id": "b7cccd00ce024ecaac6f69ddbf1d1140"
     },
     {
       "binding": "CONTENT",
-      "id": "c8e9cf82653944a585c223917c70ebc8",
-      "preview_id": "dd39795828984709847726014f1c7e69"
+      "id": "c8e9cf82653944a585c223917c70ebc8"
     }
   ],
 
