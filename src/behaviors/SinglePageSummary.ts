@@ -1,6 +1,7 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
 import { buildDocContext, normalizeUrl } from "../search/context";
 import { runChat, resolveAnswerModel } from "../lib/llm";
+import { buildSystemPrompt } from "../lib/prompts";
 
 /**
  * SINGLE_PAGE_SUMMARY Behavior
@@ -62,14 +63,16 @@ export class SinglePageSummary implements BehaviorHandler {
       : "Include a link to the source page.";
 
     // Build system prompt for biographical/entity summary
-    const basePrompt = intent?.system_prompt ||
-      config.search?.system_prompt ||
+    const basePrompt = buildSystemPrompt(
+      config.search?.system_prompt,
+      intent?.system_prompt,
       `You are WORX AI, a strategic assistant that provides detailed summaries of people and entities.
 - Provide a comprehensive paragraph about the person or topic
 - Include their role, background, and key achievements
 - Mention relationships to other team members or topics when relevant
 - Include an inline Markdown link to their page
-- Use WORX in all caps`;
+- Use WORX in all caps`,
+    );
 
     const intentGuide = `Format your answer as a detailed paragraph (or two) that covers the person or entity comprehensively. Include role, highlights, background, and relevant connections. Include a direct inline link to the page.`;
 

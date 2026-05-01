@@ -1,6 +1,7 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
 import { buildDocContext, normalizeUrl } from "../search/context";
 import { runChat, resolveAnswerModel } from "../lib/llm";
+import { buildSystemPrompt } from "../lib/prompts";
 
 /**
  * MEDIUM_ANSWER Behavior
@@ -80,14 +81,16 @@ export class MediumAnswer implements BehaviorHandler {
     const linkHints = ["Use only these URLs when linking:", ...allowedUrls.map((u) => `- ${u}`)].join("\n");
 
     // Build system prompt
-    const basePrompt = intent?.system_prompt ||
-      config.search?.system_prompt ||
+    const basePrompt = buildSystemPrompt(
+      config.search?.system_prompt,
+      intent?.system_prompt,
       `You are WORX AI, a strategic assistant that answers questions using only content from WORX.
 - Speak from the client partner perspective; avoid using "we".
 - Keep responses concise, confident, and focused on outcomes.
 - Always include inline Markdown links to the specific page you cite.
 - Use WORX in all caps.
-- If relevant information is missing, reply exactly with: "I couldn't locate that information in the current WORX content. Try a different phrasing or explore the site for more context."`;
+- If relevant information is missing, reply exactly with: "I couldn't locate that information in the current WORX content. Try a different phrasing or explore the site for more context."`,
+    );
 
     const intentGuide = `CRITICAL LENGTH REQUIREMENT: Write exactly ONE paragraph.
 Your answer MUST be 4-6 sentences - no more, no less.

@@ -1,5 +1,6 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
 import { runChat, resolveAnswerModel } from "../lib/llm";
+import { buildSystemPrompt } from "../lib/prompts";
 
 /**
  * NAVIGATION_HELP Behavior
@@ -49,12 +50,15 @@ export class NavigationHelp implements BehaviorHandler {
     if (breadcrumbs) contextParts.push(`Navigation: ${breadcrumbs}`);
     if (parentTitle) contextParts.push(`Under: ${parentTitle}`);
 
-    const systemPrompt = intent?.system_prompt ||
+    const systemPrompt = buildSystemPrompt(
+      config.search?.system_prompt,
+      intent?.system_prompt,
       `You are WORX AI. Provide clear navigation guidance to help users find pages.
 - Give the direct link to the page
 - Mention the breadcrumb path if available
 - Be concise and helpful (2-3 sentences)
-- Use clear directional language`;
+- Use clear directional language`,
+    );
 
     const userPrompt = `Question: ${query}
 

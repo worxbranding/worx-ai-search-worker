@@ -1,5 +1,6 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
 import { runChat, resolveAnswerModel } from "../lib/llm";
+import { buildSystemPrompt } from "../lib/prompts";
 
 /**
  * SHORT_ANSWER Behavior
@@ -55,11 +56,14 @@ export class ShortAnswer implements BehaviorHandler {
       if (matchCollection) contextParts.push(`Category: ${matchCollection}`);
     }
 
-    const systemPrompt = intent?.system_prompt ||
+    const systemPrompt = buildSystemPrompt(
+      config.search?.system_prompt,
+      intent?.system_prompt,
       `You are WORX AI. You MUST provide a VERY BRIEF answer.
 CRITICAL: Keep your answer to 1-2 sentences ONLY. Be extremely concise.
 Include ONE link to the most relevant page in Markdown format [text](url).
-Do not elaborate or provide extra details. Answer the question directly and stop.`;
+Do not elaborate or provide extra details. Answer the question directly and stop.`,
+    );
 
     const userPrompt = `Question: ${query}
 

@@ -1,5 +1,6 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
 import { runChat, resolveAnswerModel } from "../lib/llm";
+import { buildSystemPrompt } from "../lib/prompts";
 
 /**
  * RECENT_ITEMS Behavior
@@ -50,9 +51,12 @@ export class RecentItems implements BehaviorHandler {
 
     // If we have an index page with children and pageId, use concreteDirective
     if (isIndex && childrenCount > 0 && pageId) {
-      const systemPrompt = intent?.system_prompt ||
+      const systemPrompt = buildSystemPrompt(
+        config.search?.system_prompt,
+        intent?.system_prompt,
         `You are WORX AI. Provide a brief 1-2 sentence introduction for a list of recent items.
-Be concise. The list will be rendered separately by date.`;
+Be concise. The list will be rendered separately by date.`,
+      );
 
       const userPrompt = `Question: ${query}
 
@@ -101,10 +105,12 @@ Provide ONLY a brief introduction mentioning that these are the most recent item
     }
 
     // Fallback: Generate answer about recent items without concreteDirective
-    const systemPrompt = intent?.system_prompt ||
-      config.search?.system_prompt ||
+    const systemPrompt = buildSystemPrompt(
+      config.search?.system_prompt,
+      intent?.system_prompt,
       `You are WORX AI. Provide information about recent items or updates.
-Be concise and include dates when available.`;
+Be concise and include dates when available.`,
+    );
 
     const userPrompt = `Question: ${query}
 

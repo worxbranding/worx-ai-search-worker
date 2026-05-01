@@ -53,6 +53,15 @@ export function mergeIntentTuning(
   if (intent.max_output_tokens  !== undefined) search.max_output_tokens  = intent.max_output_tokens;
   if (intent.max_context_docs   !== undefined) search.max_context_docs   = intent.max_context_docs;
   if (intent.max_kv_text_chars  !== undefined) search.max_kv_text_chars  = intent.max_kv_text_chars;
+  // Reflect the intent's model override on cfg.search.answer_model so
+  // _resolved_search in the response shows what actually ran. Behaviors
+  // still get the model via resolveAnswerModel, which has the same
+  // intent-first precedence — this is purely for UI fidelity.
+  if (intent.answer_model?.provider && intent.answer_model?.model) {
+    search.answer_model = intent.answer_model;
+  } else if (intent.chat_model) {
+    search.answer_model = { provider: "cloudflare", model: intent.chat_model };
+  }
   return { ...config, search };
 }
 
@@ -134,8 +143,30 @@ async function callViaGateway(env: Env, req: LlmRequest): Promise<LlmResponse> {
     model: `${req.provider}/${req.model}`,
     messages: req.messages,
   };
-  if (req.temperature != null) body.temperature = req.temperature;
-  if (req.max_tokens != null) body.max_tokens = req.max_tokens;
+  // OpenAI's GPT-5 family and reasoning (o1/o3/o4) models have stricter
+  // params: they reject `max_tokens` (must be `max_completion_tokens`) and
+  // only accept the default temperature, so we omit it entirely.
+  // Anthropic accepts `max_tokens` and any temperature (via Cloudflare's
+  // compat endpoint).
+  const isOpenAiRestricted =
+    req.provider === "openai" && /^(gpt-5|o1|o3|o4-)/i.test(req.model);
+
+  if (req.temperature != null && !isOpenAiRestricted) {
+    body.temperature = req.temperature;
+  }
+  if (req.max_tokens != null) {
+    if (isOpenAiRestricted) {
+      // GPT-5 / reasoning models count hidden reasoning tokens against
+      // this budget. Per-behavior clamps (e.g. LongFormAnswer caps at
+      // 600) get fully consumed by reasoning and leave nothing for the
+      // visible answer — the model then returns an empty string and the
+      // behavior falls back to a "no content" message. Floor the budget
+      // to give reasoning headroom + room for the actual answer.
+      body.max_completion_tokens = Math.max(req.max_tokens, 4000);
+    } else {
+      body.max_tokens = req.max_tokens;
+    }
+  }
 
   const resp = await fetch(url, {
     method: "POST",

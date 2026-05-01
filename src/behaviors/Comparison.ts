@@ -1,6 +1,7 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
 import { buildDocContext, normalizeUrl } from "../search/context";
 import { runChat, resolveAnswerModel } from "../lib/llm";
+import { buildSystemPrompt } from "../lib/prompts";
 
 /**
  * COMPARISON Behavior
@@ -78,15 +79,17 @@ export class Comparison implements BehaviorHandler {
     const linkHints = ["Use only these URLs when linking:", ...allowedUrls.map((u) => `- ${u}`)].join("\n");
 
     // Build system prompt for comparison
-    const basePrompt = intent?.system_prompt ||
-      config.search?.system_prompt ||
+    const basePrompt = buildSystemPrompt(
+      config.search?.system_prompt,
+      intent?.system_prompt,
       `You are WORX AI, a strategic assistant that provides clear comparisons.
 - Identify the two items being compared
 - Highlight key differences and similarities
 - Use a structured format (bullet points or table-like structure)
 - Include links to both items being compared
 - Be objective and factual
-- Use WORX in all caps`;
+- Use WORX in all caps`,
+    );
 
     const intentGuide = `Provide a side-by-side comparison highlighting the key differences between the two items. Use a structured format with clear sections or bullet points. Include links to both items.`;
 

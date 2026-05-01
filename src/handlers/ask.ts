@@ -7,6 +7,7 @@ import { sha1Hex } from "../utils/crypto";
 import { isNoAnswer } from "../utils/isNoAnswer";
 import { executeSearchPipeline } from "../search/pipeline";
 import { mergeIntentTuning } from "../lib/llm";
+import { buildSystemPrompt } from "../lib/prompts";
 import type { Env, ExecutionContext, SiteConfig } from "../lib/types";
 
 
@@ -47,14 +48,16 @@ export async function handleAsk(
     return json({ ok: false, error: "Missing field 'q'" }, { status: 400 });
   }
 
-  // Execute shared search pipeline (same logic as /search endpoint)
+  // Execute shared search pipeline (same logic as /search endpoint).
+  // body.force_intent (if any) skips intent detection — used by the
+  // Training tab's "Lock to <intent>" toggle so iteration stays anchored.
   const {
     matches: finalMatches,
     intent,
     behaviorName,
     initial_topK,
     final_topK,
-  } = await executeSearchPipeline(q, site, cfg, env, ctx, cache);
+  } = await executeSearchPipeline(q, site, cfg, env, ctx, cache, body.force_intent);
 
   // Check cache before executing behavior
   const ansKeyRaw = JSON.stringify({
@@ -179,6 +182,27 @@ export async function handleAsk(
     initial_k: initial_topK, // Number of results fetched from vectorize
     ...behaviorResponse, // Include answer, blurb, concreteDirective, sources, etc.
     stats,
+    // What the worker actually used after intent overrides were merged
+    // into the site config. Surfaces in the Training UI so the user can
+    // see "this is what got sent" vs the bare site row. system_prompt
+    // is shown post-combination (site + intent appended) so the value
+    // matches what the LLM saw.
+    _resolved_search: {
+      ...(cfgForBehavior.search ?? {}),
+      system_prompt: buildSystemPrompt(
+        cfg.search?.system_prompt,
+        intent?.system_prompt,
+        cfgForBehavior.search?.system_prompt ?? "",
+      ),
+    },
+    _resolved_intent: intent && intent.name !== "default" ? {
+      name: intent.name,
+      system_prompt: intent.system_prompt ?? null,
+      answer_model: intent.answer_model ?? (intent.chat_model
+        ? { provider: "cloudflare", model: intent.chat_model }
+        : null),
+      response_behavior: intent.response_behavior ?? null,
+    } : null,
   };
 
   if (wantDebug) {

@@ -1,5 +1,6 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
 import { runChat, resolveAnswerModel } from "../lib/llm";
+import { buildSystemPrompt } from "../lib/prompts";
 
 /**
  * COLLECTION_OVERVIEW Behavior
@@ -57,11 +58,14 @@ export class CollectionOverview implements BehaviorHandler {
     if (collection) contextParts.push(`Collection: ${collection}`);
     if (childrenCount > 0) contextParts.push(`Items in collection: ${childrenCount}`);
 
-    const systemPrompt = intent?.system_prompt ||
+    const systemPrompt = buildSystemPrompt(
+      config.search?.system_prompt,
+      intent?.system_prompt,
       `You are WORX AI. Provide a high-level overview of a collection or category.
 Summarize what the collection contains without listing individual items.
 Include statistics if available (e.g., "X items across Y categories").
-Keep it concise (2-3 paragraphs) and include a link to the collection page.`;
+Keep it concise (2-3 paragraphs) and include a link to the collection page.`,
+    );
 
     const userPrompt = `Question: ${query}
 

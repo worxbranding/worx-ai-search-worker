@@ -1,6 +1,7 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
 import { buildDocContext, normalizeUrl } from "../search/context";
 import { runChat, resolveAnswerModel } from "../lib/llm";
+import { buildSystemPrompt } from "../lib/prompts";
 
 /**
  * DETAILED_EXPLANATION Behavior
@@ -77,14 +78,16 @@ export class DetailedExplanation implements BehaviorHandler {
     const linkHints = ["Use only these URLs when linking:", ...allowedUrls.map((u) => `- ${u}`)].join("\n");
 
     // Build system prompt emphasizing step-by-step structure
-    const basePrompt = intent?.system_prompt ||
-      config.search?.system_prompt ||
+    const basePrompt = buildSystemPrompt(
+      config.search?.system_prompt,
+      intent?.system_prompt,
       `You are WORX AI, a strategic assistant that explains processes clearly and comprehensively.
 - Provide step-by-step explanations when appropriate
 - Use numbered lists for sequential processes
 - Be detailed but focused on actionable information
 - Include inline Markdown links to source pages
-- Use WORX in all caps`;
+- Use WORX in all caps`,
+    );
 
     const intentGuide = `Outline the recommended steps or provide a detailed explanation of the process. Be thorough but organized. Use numbered lists for sequential steps. Link to the source page that details the process.`;
 

@@ -1,5 +1,6 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
 import { runChat, resolveAnswerModel } from "../lib/llm";
+import { buildSystemPrompt } from "../lib/prompts";
 
 /**
  * SHORT_BLURB_WITH_LIST Behavior
@@ -57,9 +58,12 @@ export class ShortBlurbWithList implements BehaviorHandler {
     // If page has children and we have a pageId, use concreteDirective
     if (hasChildren && pageId && isIndex) {
       // Generate a brief blurb using LLM
-      const systemPrompt = intent?.system_prompt ||
+      const systemPrompt = buildSystemPrompt(
+        config.search?.system_prompt,
+        intent?.system_prompt,
         `You are WORX AI. Provide a very brief 1-2 sentence introduction for a list of items.
-Be concise and professional. Do not list the items - just introduce the category.`;
+Be concise and professional. Do not list the items - just introduce the category.`,
+      );
 
       const userPrompt = `Question: ${query}
 
@@ -108,9 +112,12 @@ Provide ONLY a brief 1-2 sentence introduction. The actual list will be rendered
     }
 
     // Fallback: No children or no pageId - generate simple answer
-    const systemPrompt = intent?.system_prompt ||
+    const systemPrompt = buildSystemPrompt(
+      config.search?.system_prompt,
+      intent?.system_prompt,
       `You are WORX AI. Provide a brief, helpful answer based on the available information.
-Keep it concise (2-3 sentences). Include a link to the source page.`;
+Keep it concise (2-3 sentences). Include a link to the source page.`,
+    );
 
     const userPrompt = `Question: ${query}
 

@@ -26,7 +26,8 @@ export async function executeSearchPipeline(
   cfg: SiteConfig,
   env: Env,
   ctx: ExecutionContext | undefined,
-  cache: { answer: boolean; embedding: boolean }
+  cache: { answer: boolean; embedding: boolean },
+  forceIntent?: string
 ): Promise<{
   matches: SearchMatch[];
   intent: CustomIntent;
@@ -40,10 +41,25 @@ export async function executeSearchPipeline(
   // Get custom intents from config
   const customIntents = cfg.custom_intents || [];
 
+  // Route-lock: caller forced a specific intent (Training tab "Lock to
+  // <intent>" toggle). Skip detection entirely.
+  let detectedIntent: CustomIntent | null = null;
+  if (forceIntent) {
+    const forced = customIntents.find((i) => i.name === forceIntent);
+    if (forced) {
+      detectedIntent = forced;
+      log("[Intent] Forced by request:", forced.name);
+    } else {
+      log("[Intent] force_intent did not match any intent:", forceIntent);
+    }
+  }
+
   // Phase 1: Try keyword-based detection (fast path)
-  let detectedIntent: CustomIntent | null = detectIntentFromQuery(query, customIntents);
-  if (detectedIntent) {
-    log("[Intent] Detected via keywords:", detectedIntent.name);
+  if (!detectedIntent) {
+    detectedIntent = detectIntentFromQuery(query, customIntents);
+    if (detectedIntent) {
+      log("[Intent] Detected via keywords:", detectedIntent.name);
+    }
   }
 
   // Prepare vector search with two-stage filtering. Per-intent overrides

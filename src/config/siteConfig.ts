@@ -45,6 +45,12 @@ export interface InBandRequestBody {
    */
   cache_answer?: boolean;
   cache_embedding?: boolean;
+  /**
+   * Training-tab "route lock": skip intent detection and use this intent
+   * by name. Useful when iterating on a prompt without the matching
+   * surface shifting underfoot if the user tweaks keywords.
+   */
+  force_intent?: string;
 }
 
 export interface CacheFlags {
