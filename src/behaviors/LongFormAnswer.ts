@@ -2,6 +2,7 @@ import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./Behav
 import { buildDocContext, normalizeUrl } from "../search/context";
 import { runChat, resolveAnswerModel } from "../lib/llm";
 import { buildSystemPrompt } from "../lib/prompts";
+import { resolveBehaviorMaxTokens } from "../lib/configDefaults";
 
 /**
  * LONG_FORM_ANSWER Behavior
@@ -115,8 +116,11 @@ Write a comprehensive answer with 2-3 paragraphs. Be thorough and include multip
     // Resolve provider+model via the multi-provider LlmClient
     const answerModel = resolveAnswerModel(intent, config);
     const temperature = config.search?.chat_temperature ?? 0.1;
-    // Cap at 600 tokens for faster responses while still being comprehensive
-    const max_tokens = Math.max(300, Math.min(600, Number(config.search?.max_output_tokens ?? 500)));
+    // Per-intent max_output_tokens (merged into cfg.search) wins, clamped
+    // into [behavior_caps.long_form_answer_floor, behavior_caps.long_form_answer]
+    // with default behavior_caps.long_form_answer_default. All three knobs
+    // are config-overridable per site.
+    const max_tokens = resolveBehaviorMaxTokens(config, "long_form_answer");
 
     const result = await runChat(env, {
       provider: answerModel.provider,

@@ -4,6 +4,7 @@ import { cachedEmbed, filterToSite } from "./vectorize";
 import { detectIntent, getDefaultIntent } from "./detection";
 import { extractKeywords, applyMetadataBoost, applyKeywordBoost } from "./rerank";
 import { fetchFullTextForMatches } from "../utils/fullText";
+import { detectionValue } from "../lib/configDefaults";
 
 /**
  * Shared search pipeline used by both /search and /ask endpoints.
@@ -96,7 +97,8 @@ export async function executeSearchPipeline(
   // embedding) survive without indexed content (Pricing, Team Members on
   // a thinly-indexed CEO page) while fuzzy junk-vs-Services matches —
   // which after metadata halving cap at ~0.59 — don't.
-  const HIGH_CONFIDENCE = 0.68;
+  // Configurable via cfg.search.detection.high_confidence_score.
+  const HIGH_CONFIDENCE = detectionValue(cfg, 'high_confidence_score');
   let detectionReason: string | null = null;
   let detectionScore = 0;
   let detection: ReturnType<typeof detectIntent> = { intent: null, reason: "no_intents" };
@@ -187,10 +189,14 @@ export async function executeSearchPipeline(
     const metadataMatches = (detectedIntent && detectedIntent.name !== "default")
       ? ((detectedIntent as any).detection?.metadata_matches || {})
       : {};
-    matches = applyMetadataBoost(matches, metadataMatches, queryKeywords);
+    matches = applyMetadataBoost(matches, metadataMatches, queryKeywords, cfg);
     log("[Pass1:Metadata] Applied metadata + query-token-overlap boosting");
 
-    const candidateCount = Math.min(8, matches.length);
+    // Candidate slice for the keyword/full-text pass. Configurable via
+    // cfg.search.detection.candidate_slice. Smaller = faster but may miss
+    // relevant pages whose raw embedding rank is borderline.
+    const candidateSlice = detectionValue(cfg, 'candidate_slice');
+    const candidateCount = Math.min(candidateSlice, matches.length);
     const candidates = matches.slice(0, candidateCount);
     log("[Pass1:Metadata] Top", candidateCount, "candidates after metadata boost");
 
@@ -199,7 +205,7 @@ export async function executeSearchPipeline(
     );
     log("[Pass2:FetchText] Fetched full text for", candidatesWithText.length, "candidates");
 
-    const reranked = applyKeywordBoost(candidatesWithText, allKeywords);
+    const reranked = applyKeywordBoost(candidatesWithText, allKeywords, cfg);
     log("[Pass3:Keywords] Applied keyword boosting with", allKeywords.length, "combined keywords");
 
     const afterScores = reranked.slice(0, 3).map((m) => ({

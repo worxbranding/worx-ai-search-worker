@@ -2,6 +2,7 @@ import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./Behav
 import { buildDocContext, normalizeUrl } from "../search/context";
 import { runChat, resolveAnswerModel } from "../lib/llm";
 import { buildSystemPrompt } from "../lib/prompts";
+import { resolveBehaviorMaxTokens } from "../lib/configDefaults";
 
 /**
  * SINGLE_PAGE_SUMMARY Behavior
@@ -89,7 +90,7 @@ ${intentGuide}`.trim();
     // Resolve provider+model via the multi-provider LlmClient
     const answerModel = resolveAnswerModel(intent, config);
     const temperature = config.search?.chat_temperature ?? 0.1;
-    const max_tokens = Math.max(200, Math.min(500, Number(config.search?.max_output_tokens ?? 400)));
+    const max_tokens = resolveBehaviorMaxTokens(config, "single_page_summary");
 
     const result = await runChat(env, {
       provider: answerModel.provider,

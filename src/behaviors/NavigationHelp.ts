@@ -1,6 +1,7 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
 import { runChat, resolveAnswerModel } from "../lib/llm";
 import { buildSystemPrompt } from "../lib/prompts";
+import { resolveSimpleBehaviorMaxTokens } from "../lib/configDefaults";
 
 /**
  * NAVIGATION_HELP Behavior
@@ -79,7 +80,8 @@ Provide navigation guidance with the breadcrumb path and direct link.`;
         { role: "user", content: userPrompt },
       ],
       temperature,
-      max_tokens: 256,
+      // Per-intent max_output_tokens wins; default cfg.search.behavior_caps.navigation_help (256).
+      max_tokens: resolveSimpleBehaviorMaxTokens(config, "navigation_help"),
     });
 
     // Generate answer with navigation path

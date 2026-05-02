@@ -146,12 +146,16 @@ async function callViaGateway(env: Env, req: LlmRequest): Promise<LlmResponse> {
   // OpenAI's GPT-5 family and reasoning (o1/o3/o4) models have stricter
   // params: they reject `max_tokens` (must be `max_completion_tokens`) and
   // only accept the default temperature, so we omit it entirely.
-  // Anthropic accepts `max_tokens` and any temperature (via Cloudflare's
-  // compat endpoint).
+  // Anthropic's Claude Opus 4.x models also reject `temperature` ("deprecated
+  // for this model") — Sonnet 4.x still accepts it, so the restriction is
+  // narrow.
   const isOpenAiRestricted =
     req.provider === "openai" && /^(gpt-5|o1|o3|o4-)/i.test(req.model);
+  const isAnthropicTempRestricted =
+    req.provider === "anthropic" && /^claude-opus-4/i.test(req.model);
+  const skipTemperature = isOpenAiRestricted || isAnthropicTempRestricted;
 
-  if (req.temperature != null && !isOpenAiRestricted) {
+  if (req.temperature != null && !skipTemperature) {
     body.temperature = req.temperature;
   }
   if (req.max_tokens != null) {

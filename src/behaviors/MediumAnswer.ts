@@ -2,6 +2,7 @@ import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./Behav
 import { buildDocContext, normalizeUrl } from "../search/context";
 import { runChat, resolveAnswerModel } from "../lib/llm";
 import { buildSystemPrompt } from "../lib/prompts";
+import { resolveSimpleBehaviorMaxTokens } from "../lib/configDefaults";
 
 /**
  * MEDIUM_ANSWER Behavior
@@ -115,7 +116,8 @@ Write ONE paragraph (4-6 sentences) answering this question. Stop after one para
     // Run LLM via the multi-provider LlmClient
     const answerModel = resolveAnswerModel(intent, config);
     const temperature = config.search?.chat_temperature ?? 0.1;
-    const max_tokens = 300; // Fixed at 300 tokens for medium length
+    // Per-intent max_output_tokens wins; default cfg.search.behavior_caps.medium_answer (300).
+    const max_tokens = resolveSimpleBehaviorMaxTokens(config, "medium_answer");
 
     const result = await runChat(env, {
       provider: answerModel.provider,

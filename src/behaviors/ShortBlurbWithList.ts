@@ -1,6 +1,7 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
 import { runChat, resolveAnswerModel } from "../lib/llm";
 import { buildSystemPrompt } from "../lib/prompts";
+import { resolveSimpleBehaviorMaxTokens } from "../lib/configDefaults";
 
 /**
  * SHORT_BLURB_WITH_LIST Behavior
@@ -87,7 +88,8 @@ Provide ONLY a brief 1-2 sentence introduction. The actual list will be rendered
           { role: "user", content: userPrompt },
         ],
         temperature,
-        max_tokens: 256, // Short blurb only
+        // Per-intent max_output_tokens wins; default cfg.search.behavior_caps.short_blurb_with_list (256).
+        max_tokens: resolveSimpleBehaviorMaxTokens(config, "short_blurb_with_list"),
       });
 
       const answerText = (result.answer || preview || `Here are the ${title.toLowerCase()}:`) as string;
@@ -140,7 +142,8 @@ Provide a brief answer with a link to ${url}.`;
         { role: "user", content: userPrompt },
       ],
       temperature,
-      max_tokens: 384,
+      // Per-intent max_output_tokens wins; default cfg.search.behavior_caps.short_blurb_with_list_fallback (384).
+      max_tokens: resolveSimpleBehaviorMaxTokens(config, "short_blurb_with_list_fallback"),
     });
 
     const answer = result.answer || `For information about ${title}, visit ${url}`;

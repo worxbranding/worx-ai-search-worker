@@ -1,6 +1,7 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
 import { runChat, resolveAnswerModel } from "../lib/llm";
 import { buildSystemPrompt } from "../lib/prompts";
+import { resolveSimpleBehaviorMaxTokens } from "../lib/configDefaults";
 
 /**
  * SHORT_ANSWER Behavior
@@ -84,7 +85,9 @@ Provide ONLY a 1-2 sentence answer. Include a link to the most relevant source. 
         { role: "user", content: userPrompt },
       ],
       temperature,
-      max_tokens: 150, // Reduced from 256 - force brevity
+      // Per-intent max_output_tokens wins; falls back to
+      // cfg.search.behavior_caps.short_answer (default 150).
+      max_tokens: resolveSimpleBehaviorMaxTokens(config, "short_answer"),
     });
 
     const answer = result.answer || `For information about ${title}, visit [${title}](${url}).`;

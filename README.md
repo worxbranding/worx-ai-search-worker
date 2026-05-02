@@ -217,6 +217,18 @@ Each custom intent can override the site-level LLM settings:
 
 Fallback chain: intent setting → site config setting → system default.
 
+### Tuning knobs (behavior caps, rerank weights, detection)
+
+All previously-hardcoded numeric tunables live in **`src/lib/configDefaults.ts`** with documentation on each value. Three groups:
+
+1. **`BEHAVIOR_CAP_DEFAULTS`** — per-behavior `max_tokens`, plus floor/ceiling/default for the long-form behaviors. Per-intent `max_output_tokens` from the CMS wins; the default applies when the intent doesn't set one.
+2. **`RERANK_WEIGHT_DEFAULTS`** — boost values applied during the three-pass re-rank. Tune to shift balance between semantic similarity, exact path match, title overlap, and full-text keywords.
+3. **`DETECTION_DEFAULTS`** — `high_confidence_score` (0.68 — score above which routing wins regardless of content) and `candidate_slice` (8 — how many top matches enter the keyword pass).
+
+**To tune for a different site:** edit `configDefaults.ts` and redeploy. The behaviors / pipeline / rerank read these via `behaviorCap()`, `rerankWeight()`, and `detectionValue()` helpers — every value is also overridable per-request via `cfg.search.behavior_caps.*`, `cfg.search.rerank_weights.*`, and `cfg.search.detection.*` if a future CMS payload chooses to send them.
+
+WORX defaults are tuned for marketing-site content (short pages, title-heavy semantics). A site with deep URL hierarchies may want to raise `metadata_path_prefix`; a site with very long pages may want to lean on `keyword_in_full_text`.
+
 ### Response Format
 All `/ask` and `/search` responses include `intent` and `behavior` fields. `/search` additionally returns a `detection` block for tuning visibility.
 

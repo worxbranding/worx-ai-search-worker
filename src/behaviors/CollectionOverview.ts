@@ -1,6 +1,7 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
 import { runChat, resolveAnswerModel } from "../lib/llm";
 import { buildSystemPrompt } from "../lib/prompts";
+import { resolveSimpleBehaviorMaxTokens } from "../lib/configDefaults";
 
 /**
  * COLLECTION_OVERVIEW Behavior
@@ -86,7 +87,8 @@ Provide a high-level overview of this collection. DO NOT list individual items.`
         { role: "user", content: userPrompt },
       ],
       temperature,
-      max_tokens: 512,
+      // Per-intent max_output_tokens wins; default cfg.search.behavior_caps.collection_overview (512).
+      max_tokens: resolveSimpleBehaviorMaxTokens(config, "collection_overview"),
     });
 
     const answerText = (result.answer || `${title} contains ${childrenCount} items.`) as string;

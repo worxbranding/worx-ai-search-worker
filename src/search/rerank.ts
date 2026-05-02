@@ -1,5 +1,6 @@
-import type { SearchMatch } from "../lib/types";
+import type { SearchMatch, SiteConfig } from "../lib/types";
 import { log } from "../lib/logging";
+import { rerankWeight } from "../lib/configDefaults";
 
 /**
  * Extract meaningful keywords from query (excluding common stop words)
@@ -43,51 +44,60 @@ export function extractKeywords(query: string): string[] {
 export function applyMetadataBoost(
   matches: SearchMatch[],
   metadataMatches: Record<string, any>,
-  queryTokens: string[] = []
+  queryTokens: string[] = [],
+  config?: SiteConfig
 ): SearchMatch[] {
+  // Resolve per-site weights once (defaults from configDefaults if absent).
+  const W = {
+    collection:       rerankWeight(config, 'metadata_collection'),
+    pageKind:         rerankWeight(config, 'metadata_page_kind'),
+    exactPath:        rerankWeight(config, 'metadata_exact_path'),
+    pathPrefix:       rerankWeight(config, 'metadata_path_prefix'),
+    titleContains:    rerankWeight(config, 'metadata_title_contains'),
+    queryTokenTitle:  rerankWeight(config, 'query_token_in_title'),
+    queryTokenPath:   rerankWeight(config, 'query_token_in_path'),
+    queryTokenMaxTotal: rerankWeight(config, 'query_token_max_total'),
+  };
+
   return matches.map((match) => {
     const metadata = (match.metadata || {}) as Record<string, any>;
     let boost = 0;
     const boostDetails: string[] = [];
 
-    // Boost if collection matches
     if (metadataMatches.collection && metadata.collection === metadataMatches.collection) {
-      boost += 0.1;
-      boostDetails.push('collection match (+0.1)');
+      boost += W.collection;
+      boostDetails.push(`collection match (+${W.collection.toFixed(2)})`);
     }
 
-    // Boost if page_kind matches
     if (metadataMatches.page_kind && metadata.page_kind === metadataMatches.page_kind) {
-      boost += 0.05;
-      boostDetails.push('page_kind match (+0.05)');
+      boost += W.pageKind;
+      boostDetails.push(`page_kind match (+${W.pageKind.toFixed(2)})`);
     }
 
-    // Boost if path EXACTLY matches expected prefix (strongest signal)
     if (metadataMatches.path_starts_with && typeof metadata.path === 'string') {
       if (metadata.path === metadataMatches.path_starts_with) {
-        boost += 0.5;
-        boostDetails.push('exact path match (+0.5)');
+        boost += W.exactPath;
+        boostDetails.push(`exact path match (+${W.exactPath.toFixed(2)})`);
       } else if (metadata.path.startsWith(metadataMatches.path_starts_with)) {
-        boost += 0.3;
-        boostDetails.push('path prefix match (+0.3)');
+        boost += W.pathPrefix;
+        boostDetails.push(`path prefix match (+${W.pathPrefix.toFixed(2)})`);
       }
     }
 
-    // Boost if title contains expected terms
     if (metadataMatches.title_contains && Array.isArray(metadataMatches.title_contains) && typeof metadata.title === 'string') {
       const titleLower = metadata.title.toLowerCase();
       for (const term of metadataMatches.title_contains) {
         if (titleLower.includes(String(term).toLowerCase())) {
-          boost += 0.15;
-          boostDetails.push(`title contains "${term}" (+0.15)`);
+          boost += W.titleContains;
+          boostDetails.push(`title contains "${term}" (+${W.titleContains.toFixed(2)})`);
           break;
         }
       }
     }
 
     // Query-token overlap with this page's title / path. Title hits weigh
-    // more than path hits. Capped at +0.40 so it can promote a missed page
-    // into the candidate set without swamping intent-driven boosts.
+    // more than path hits. Capped so it can promote a missed page into
+    // the candidate set without swamping intent-driven boosts.
     if (queryTokens.length > 0) {
       const titleLower = String(metadata.title || '').toLowerCase();
       const pathLower  = String(metadata.path  || '').toLowerCase();
@@ -97,14 +107,14 @@ export function applyMetadataBoost(
       for (const tok of queryTokens) {
         if (!tok) continue;
         if (titleLower.includes(tok)) {
-          queryBoost += 0.20;
+          queryBoost += W.queryTokenTitle;
           titleHits.push(tok);
         } else if (pathLower.includes(tok)) {
-          queryBoost += 0.05;
+          queryBoost += W.queryTokenPath;
           pathHits.push(tok);
         }
       }
-      if (queryBoost > 0.40) queryBoost = 0.40;
+      if (queryBoost > W.queryTokenMaxTotal) queryBoost = W.queryTokenMaxTotal;
       if (queryBoost > 0) {
         boost += queryBoost;
         if (titleHits.length) boostDetails.push(`query token(s) in title [${titleHits.join(',')}] (+${queryBoost.toFixed(2)})`);
@@ -129,12 +139,21 @@ export function applyMetadataBoost(
  */
 export function applyKeywordBoost(
   matches: SearchMatch[],
-  queryKeywords: string[]
+  queryKeywords: string[],
+  config?: SiteConfig
 ): SearchMatch[] {
   if (queryKeywords.length === 0) {
     log("[KeywordBoost] No keywords to boost");
     return matches;
   }
+
+  const W = {
+    title:    rerankWeight(config, 'keyword_in_title'),
+    preview:  rerankWeight(config, 'keyword_in_preview'),
+    fullText: rerankWeight(config, 'keyword_in_full_text'),
+    path:     rerankWeight(config, 'keyword_in_path'),
+    multi:    rerankWeight(config, 'multi_keyword_per_match'),
+  };
 
   return matches.map((match) => {
     const metadata = (match.metadata || {}) as Record<string, any>;
@@ -145,51 +164,42 @@ export function applyKeywordBoost(
       ? [...(match as any)._boostDetails]
       : [];
 
-    // Check metadata fields (fast, but less comprehensive)
     const title = String(metadata.title || '').toLowerCase();
     const preview = String(metadata.preview || '').toLowerCase();
     const path = String(metadata.path || '').toLowerCase();
-
-    // Check full text (slow, but comprehensive) - ONLY if we have it
     const fullTextLower = fullText ? fullText.toLowerCase() : '';
 
     let keywordMatchCount = 0;
     for (const keyword of queryKeywords) {
-      let matchedInField = false;
-
       // Priority 1: Title match (strongest signal)
       if (title.includes(keyword)) {
         keywordMatchCount++;
-        boost += 0.25; // Increased from 0.2
-        boostDetails.push(`keyword "${keyword}" in title (+0.25)`);
-        matchedInField = true;
+        boost += W.title;
+        boostDetails.push(`keyword "${keyword}" in title (+${W.title.toFixed(2)})`);
       }
       // Priority 2: Preview match
       else if (preview.includes(keyword)) {
         keywordMatchCount++;
-        boost += 0.15;
-        boostDetails.push(`keyword "${keyword}" in preview (+0.15)`);
-        matchedInField = true;
+        boost += W.preview;
+        boostDetails.push(`keyword "${keyword}" in preview (+${W.preview.toFixed(2)})`);
       }
-      // Priority 3: Full text match (NEW - most important!)
+      // Priority 3: Full text match
       else if (fullTextLower && fullTextLower.includes(keyword)) {
         keywordMatchCount++;
-        boost += 0.20; // Strong boost for full text match
-        boostDetails.push(`keyword "${keyword}" in full text (+0.20)`);
-        matchedInField = true;
+        boost += W.fullText;
+        boostDetails.push(`keyword "${keyword}" in full text (+${W.fullText.toFixed(2)})`);
       }
       // Priority 4: Path match (weakest)
       else if (path.includes(keyword)) {
         keywordMatchCount++;
-        boost += 0.05;
-        boostDetails.push(`keyword "${keyword}" in path (+0.05)`);
-        matchedInField = true;
+        boost += W.path;
+        boostDetails.push(`keyword "${keyword}" in path (+${W.path.toFixed(2)})`);
       }
     }
 
     // Extra boost if page contains multiple keywords from query
     if (keywordMatchCount >= 2) {
-      const multiBoost = 0.1 * keywordMatchCount;
+      const multiBoost = W.multi * keywordMatchCount;
       boost += multiBoost;
       boostDetails.push(`multiple keywords (${keywordMatchCount}) (+${multiBoost.toFixed(2)})`);
     }

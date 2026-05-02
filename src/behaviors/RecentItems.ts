@@ -1,6 +1,7 @@
 import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./BehaviorHandler";
 import { runChat, resolveAnswerModel } from "../lib/llm";
 import { buildSystemPrompt } from "../lib/prompts";
+import { resolveSimpleBehaviorMaxTokens } from "../lib/configDefaults";
 
 /**
  * RECENT_ITEMS Behavior
@@ -79,7 +80,8 @@ Provide ONLY a brief introduction mentioning that these are the most recent item
           { role: "user", content: userPrompt },
         ],
         temperature,
-        max_tokens: 256,
+        // Per-intent max_output_tokens wins; default cfg.search.behavior_caps.recent_items_blurb (256).
+        max_tokens: resolveSimpleBehaviorMaxTokens(config, "recent_items_blurb"),
       });
 
       const answerText = (result.answer || `Here are the most recent ${title.toLowerCase()}:`) as string;
@@ -132,7 +134,8 @@ Provide information about recent items with a link.`;
         { role: "user", content: userPrompt },
       ],
       temperature,
-      max_tokens: 384,
+      // Per-intent max_output_tokens wins; default cfg.search.behavior_caps.recent_items_fallback (384).
+      max_tokens: resolveSimpleBehaviorMaxTokens(config, "recent_items_fallback"),
     });
 
     const answer = result.answer || `For recent ${title.toLowerCase()}, visit [${title}](${url}).`;

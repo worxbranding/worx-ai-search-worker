@@ -138,6 +138,124 @@ export type SiteConfig = {
      * an intent's pre-computed detection_embedding. Default 0.55.
      */
     intent_embedding_threshold?: number;
+
+    /**
+     * Per-behavior LLM `max_tokens` ceiling. Each behavior class enforces
+     * its own cap on how many tokens the LLM is allowed to generate.
+     * Per-intent `max_output_tokens` is clamped *by* these — so a 600-token
+     * intent setting on a behavior with a 256 cap still produces only 256
+     * tokens. Increase for sites with longer-form content; decrease for
+     * snappy widget answers.
+     *
+     * Defaults reflect the original WORX tuning. Each value is **the maximum
+     * the behavior will allow** — most behaviors then clamp the per-intent
+     * `max_output_tokens` into a `[floor, ceiling]` range.
+     */
+    behavior_caps?: {
+      /** ShortAnswer behavior — direct factual answers, kept very short. Default 150. */
+      short_answer?: number;
+      /** ShortBlurbWithList — the 1-2 sentence intro before the rendered child list. Default 256. */
+      short_blurb_with_list?: number;
+      /** ShortBlurbWithList fallback path (no children to render — answers inline). Default 384. */
+      short_blurb_with_list_fallback?: number;
+      /** MediumAnswer — typical Team Members / Services answers. Default 300. */
+      medium_answer?: number;
+      /** LongFormAnswer — the *ceiling* the behavior clamps the per-intent value into. Default 600. */
+      long_form_answer?: number;
+      /** LongFormAnswer floor — minimum tokens, prevents accidental ultra-short replies. Default 300. */
+      long_form_answer_floor?: number;
+      /** LongFormAnswer baseline default when no intent override is set. Default 500. */
+      long_form_answer_default?: number;
+      /** DetailedExplanation ceiling. Default 800. */
+      detailed_explanation?: number;
+      /** DetailedExplanation floor. Default 300. */
+      detailed_explanation_floor?: number;
+      /** DetailedExplanation default when no intent override. Default 600. */
+      detailed_explanation_default?: number;
+      /** SinglePageSummary ceiling. Default 500. */
+      single_page_summary?: number;
+      /** SinglePageSummary floor. Default 200. */
+      single_page_summary_floor?: number;
+      /** SinglePageSummary default. Default 400. */
+      single_page_summary_default?: number;
+      /** Comparison ceiling — comparison answers tend to run long. Default 1536. */
+      comparison?: number;
+      /** Comparison floor. Default 384. */
+      comparison_floor?: number;
+      /** Comparison default. Default 896. */
+      comparison_default?: number;
+      /** CollectionOverview — overview text rendered above a collection. Default 512. */
+      collection_overview?: number;
+      /** RecentItems — blurb intro before the rendered recent-items list. Default 256. */
+      recent_items_blurb?: number;
+      /** RecentItems fallback path (no list to render — answers inline). Default 384. */
+      recent_items_fallback?: number;
+      /** NavigationHelp — short pointer answers ("see X page"). Default 256. */
+      navigation_help?: number;
+    };
+
+    /**
+     * Re-rank boost weights applied during the three-pass re-rank
+     * (metadata → fetch full text → keywords). Each match adds the
+     * configured value to the candidate's score before re-sort. Tuning
+     * these shifts which of (semantic similarity, exact path match,
+     * title overlap, full-text keywords) dominates the final ranking.
+     *
+     * Defaults are tuned for WORX-style marketing-site content: short
+     * pages with title-heavy semantics. A site with deep URL hierarchies
+     * may want to raise the path weights; a site with very long pages
+     * may want to lean more on `keyword_in_full_text`.
+     */
+    rerank_weights?: {
+      /** Boost when match metadata.collection equals the intent's expected collection. Default 0.10. */
+      metadata_collection?: number;
+      /** Boost when metadata.page_kind equals the intent's expected kind. Default 0.05. */
+      metadata_page_kind?: number;
+      /** Strong boost when metadata.path EXACTLY equals the expected prefix. Default 0.50. */
+      metadata_exact_path?: number;
+      /** Boost when metadata.path starts-with the expected prefix (but isn't exact). Default 0.30. */
+      metadata_path_prefix?: number;
+      /** Boost when metadata.title contains any term from the intent's `title_contains` list. Default 0.15. */
+      metadata_title_contains?: number;
+      /** Per-token boost when a non-stopword from the user's query appears in metadata.title. Default 0.20. */
+      query_token_in_title?: number;
+      /** Per-token boost when a query token only appears in metadata.path (lower than title). Default 0.05. */
+      query_token_in_path?: number;
+      /** Cap on total query-token boost so it can't swamp intent-driven boosts. Default 0.40. */
+      query_token_max_total?: number;
+      /** Boost when an extracted query keyword appears in metadata.title. Default 0.25. */
+      keyword_in_title?: number;
+      /** Boost when a keyword appears in metadata.preview. Default 0.15. */
+      keyword_in_preview?: number;
+      /** Boost when a keyword appears in fetched full text. Default 0.20. */
+      keyword_in_full_text?: number;
+      /** Boost when a keyword appears in metadata.path only. Default 0.05. */
+      keyword_in_path?: number;
+      /** Per-keyword bonus when the result contains 2+ query keywords. Default 0.10. */
+      multi_keyword_per_match?: number;
+    };
+
+    /**
+     * Intent detection thresholds and slice sizes. Tuning these changes
+     * how aggressive the worker is about routing low-confidence queries
+     * to a real intent vs. falling through to Not Found / Default.
+     */
+    detection?: {
+      /**
+       * Detection score above which the worker accepts the routed intent
+       * REGARDLESS of whether vector content also passes the content
+       * floor. Genuine high-confidence matches (clear keyword + strong
+       * embedding) survive even when the indexed content is thin.
+       * Default 0.68.
+       */
+      high_confidence_score?: number;
+      /**
+       * Number of top candidates the keyword/full-text re-rank pass
+       * operates on. Smaller = faster but may miss good matches whose
+       * raw embedding rank is borderline. Default 8.
+       */
+      candidate_slice?: number;
+    };
   };
 };
 

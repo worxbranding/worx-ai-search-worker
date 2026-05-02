@@ -2,6 +2,7 @@ import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./Behav
 import { buildDocContext, normalizeUrl } from "../search/context";
 import { runChat, resolveAnswerModel } from "../lib/llm";
 import { buildSystemPrompt } from "../lib/prompts";
+import { resolveBehaviorMaxTokens } from "../lib/configDefaults";
 
 /**
  * COMPARISON Behavior
@@ -106,7 +107,7 @@ ${intentGuide}`.trim();
     // Resolve provider+model via the multi-provider LlmClient
     const answerModel = resolveAnswerModel(intent, config);
     const temperature = config.search?.chat_temperature ?? 0.1;
-    const max_tokens = Math.max(384, Math.min(1536, Number(config.search?.max_output_tokens ?? 896)));
+    const max_tokens = resolveBehaviorMaxTokens(config, "comparison");
 
     const result = await runChat(env, {
       provider: answerModel.provider,

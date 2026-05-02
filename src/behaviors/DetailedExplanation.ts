@@ -2,6 +2,7 @@ import type { BehaviorHandler, BehaviorContext, BehaviorResponse } from "./Behav
 import { buildDocContext, normalizeUrl } from "../search/context";
 import { runChat, resolveAnswerModel } from "../lib/llm";
 import { buildSystemPrompt } from "../lib/prompts";
+import { resolveBehaviorMaxTokens } from "../lib/configDefaults";
 
 /**
  * DETAILED_EXPLANATION Behavior
@@ -104,8 +105,8 @@ ${intentGuide}`.trim();
     // Resolve provider+model via the multi-provider LlmClient
     const answerModel = resolveAnswerModel(intent, config);
     const temperature = config.search?.chat_temperature ?? 0.1;
-    // Cap at 800 tokens - enough for numbered steps without being verbose
-    const max_tokens = Math.max(300, Math.min(800, Number(config.search?.max_output_tokens ?? 600)));
+    // Per-intent max_output_tokens wins, clamped into [floor, ceiling] from config.
+    const max_tokens = resolveBehaviorMaxTokens(config, "detailed_explanation");
 
     const result = await runChat(env, {
       provider: answerModel.provider,
