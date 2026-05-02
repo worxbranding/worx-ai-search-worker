@@ -5,6 +5,7 @@ import { getBehavior } from "../behaviors";
 import type { BehaviorResponse } from "../behaviors";
 import { sha1Hex } from "../utils/crypto";
 import { isNoAnswer } from "../utils/isNoAnswer";
+import { providerForModel } from "../utils/providerForModel";
 import { executeSearchPipeline } from "../search/pipeline";
 import { mergeIntentTuning } from "../lib/llm";
 import { buildSystemPrompt } from "../lib/prompts";
@@ -59,6 +60,41 @@ export async function handleAsk(
     final_topK,
   } = await executeSearchPipeline(q, site, cfg, env, ctx, cache, body.force_intent);
 
+  // Not-Found short-circuit. The pipeline routes to the Not Found system
+  // intent when vector search has nothing relevant. Emit its system_prompt
+  // verbatim — no LLM call, no token spend, deterministic voice.
+  if (intent.is_system === true && intent.name === "Not Found") {
+    const cannedAnswer = (intent.system_prompt || "I couldn't find that in WORX content. Try rephrasing your question.").trim();
+    const stats = {
+      question: q,
+      found_index: false,
+      cached: false,
+      provider: null,
+      model: null,
+      tokens_input: 0,
+      tokens_output: 0,
+      total_tokens: 0,
+      timestamp: new Date().toISOString(),
+      temperature: null,
+      intent: intent.name,
+      behavior: behaviorName,
+    };
+    const bodyOut: Record<string, unknown> = {
+      ok: true,
+      q,
+      k: final_topK,
+      initial_k: initial_topK,
+      answer: cannedAnswer,
+      stats,
+    };
+    if (wantDebug) {
+      bodyOut._debug = { matches: [], cache: "miss", intent: intent.name, short_circuit: "not_found" };
+    }
+    const response = json(bodyOut);
+    stop();
+    return response;
+  }
+
   // Check cache before executing behavior
   const ansKeyRaw = JSON.stringify({
     site,
@@ -86,6 +122,7 @@ export async function handleAsk(
           question: q,
           found_index: foundIndex,
           cached: true,
+          provider: providerForModel(cachedResponse.model || null),
           model: cachedResponse.model || null,
           tokens_input: null,
           tokens_output: null,
@@ -165,6 +202,7 @@ export async function handleAsk(
     question: q,
     found_index: foundIndex,
     cached: false,
+    provider: providerForModel(behaviorResponse.model || null),
     model: behaviorResponse.model || null,
     tokens_input: behaviorResponse.tokens_input || null,
     tokens_output: behaviorResponse.tokens_output || null,

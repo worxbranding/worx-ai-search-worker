@@ -9,9 +9,9 @@ This README explains how it works, how to configure it, and all the ways to inte
 - Vector store: Cloudflare Vectorize (binding: `VECTORIZE`) containing document embeddings.
 - Inference: Workers AI (binding: `AI`) for both embeddings and chat responses.
 - State/config: Cloudflare KV (binding: `CONFIG`) for per-site configuration, document texts, and caches.
-- Behavior system: 10 built-in response behaviors selected by custom intent detection (keyword + metadata hybrid).
-- Search pipeline: Two-phase intent detection, three-pass re-ranking (metadata boost, full text fetch, keyword boost).
-- Worker routes: REST endpoints for status, search, ask, admin cache control, and debugging.
+- Behavior system: 10 built-in response behaviors selected by custom intent detection.
+- Search pipeline: single-pass scored intent detection (embedding + keyword + metadata, no priority list) with tiered confidence + content-floor gating, followed by three-pass re-ranking.
+- Worker routes: REST endpoints for status, search, ask, embed, admin cache control, and debugging.
 
 
 ## Bindings and environment
@@ -116,28 +116,29 @@ List behaviors return a `concreteDirective` object in the response instead of (o
 
 Directive types: `render_children`, `render_siblings`, `render_recent`.
 
-### Custom Intents (KV Configuration)
-Intents are defined in the site config under `custom_intents`. Each intent maps detection rules to a response behavior, with optional model and prompt overrides.
+### Custom Intents (in-band per request)
+Intents come from the CMS in the request body (`body.intents`). Each intent maps detection rules to a response behavior, with optional model and prompt overrides. Each intent also carries a pre-computed `detection_embedding` (BGE-1024) of its name + description + examples + keywords.
 
 ```json
 {
   "custom_intents": [
     {
-      "name": "services",
-      "response_behavior": "short_blurb_with_list",
-      "priority": 80,
+      "name": "Services",
+      "response_behavior": "medium_answer",
       "enabled": true,
-      "system_prompt": "You are a helpful assistant. Briefly introduce our services.",
+      "is_system": false,
+      "system_prompt": "...optional override...",
       "chat_model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
       "detection": {
-        "keywords": ["services", "what do you offer", "capabilities"],
+        "keywords": ["services", "do you do", "do you offer", "..."],
+        "description": "Plain-English description of what queries should hit this intent.",
+        "examples": ["Do you do SEO?", "Tell me about your branding service", "..."],
         "metadata_matches": {
           "path_starts_with": "/services",
-          "page_kind": "index",
-          "collection": "Services",
           "title_contains": ["service", "capability"]
         }
-      }
+      },
+      "detection_embedding": [0.012, -0.034, ...]
     }
   ]
 }
@@ -146,36 +147,65 @@ Intents are defined in the site config under `custom_intents`. Each intent maps 
 Intent fields:
 - `name` (required) - Unique identifier
 - `response_behavior` (required) - One of the 10 behavior names
-- `priority` (required) - Higher values match first (default: 50)
-- `enabled` (optional) - Set `false` to disable without deleting
-- `system_prompt` (optional) - Override the behavior's default system prompt
-- `chat_model` (optional) - Override the site's default chat model for this intent
-- `detection` (required) - Detection rules (see below)
+- `enabled` (optional, default true) - Set `false` to disable without deleting
+- `is_system` (optional) - System intents (Default, Not Found) are excluded from scored detection and routed deterministically
+- `system_prompt` (optional) - Appended to the site prompt for this intent
+- `chat_model` / `answer_model` (optional) - Per-intent LLM override
+- `detection.keywords` - Substring/word-boundary matches; multi-word phrases are stronger signals
+- `detection.description`, `detection.examples` - Plain text fed into the embedding source
+- `detection.metadata_matches` - Optional: `path_starts_with`, `collection`, `page_kind`, `title_contains` for evidence-based boosting
+- `detection_embedding` - Pre-computed vector; the CMS auto-reembeds via `/admin/embed` whenever description/examples/keywords change
 
-When no custom intent matches, the worker falls back to the `default_behavior` from site config, or `long_form_answer` if unset.
+> `priority` is **deprecated** as of the score-based detection refactor. Old payloads with `priority` are ignored at routing time; the field is preserved on `CustomIntent` only for back-compat with stale KV writes.
 
-### Two-Phase Hybrid Detection
-Intent detection runs in two phases, combining fast keyword matching with semantic metadata analysis.
+When no custom intent matches with confidence, the worker falls back to the admin's Default system intent, or to `default_behavior` from site config.
 
-**Phase 1: Pre-Search Keyword Matching (fast path)**
-Before vector search runs, the query is checked against each intent's `detection.keywords` array. If any keyword appears in the query string (case-insensitive substring match), that intent is selected immediately. Intents are checked in priority order (highest first). Only enabled intents are considered.
+### Score-Based Intent Detection (single pass)
 
-Example: Query "What services do you offer?" matches keyword "services" in the services intent.
+The previous three-phase pipeline (pre-search keyword → post-search metadata → embedding similarity) has been replaced by a single scored pass that combines all three signals at once. No priority list — relevance evidence wins.
 
-**Phase 2: Post-Search Metadata Matching (semantic path)**
-If no keyword match is found, vector search runs first, then the top 3 results are checked against each intent's `detection.metadata_matches` criteria. All specified criteria use AND logic (all must match). Criteria options:
-- `path_starts_with` - URL/path prefix (strongest signal, fails immediately if wrong)
-- `collection` - Exact collection name match
-- `page_kind` - Exact page kind match
-- `title_contains` - At least one term must appear in the title
+For each candidate intent (system intents excluded):
 
-Example: Query "What opportunities are available?" has no keyword match, but vector search returns pages under `/careers` which matches the careers intent's `path_starts_with: "/careers"`.
+```
+score = embedding_similarity                  // cosine(query, intent.detection_embedding)
+      + capped_keyword_boost                  // up to KW_BOOST_CAP (0.30)
+      + max_per_result_metadata_evidence      // max(result.score × meta_evidence) over top-3 vector results
+```
+
+Per-criterion metadata weights (asymmetric — path > collection > title > page_kind):
+
+| Criterion | Weight |
+|---|---|
+| `path_starts_with` | 0.10 |
+| `collection` | 0.05 |
+| `title_contains` | 0.04 |
+| `page_kind` | 0.025 |
+
+Keyword boost weights (capped at 0.30 total):
+
+| Match type | Weight |
+|---|---|
+| Multi-word substring (`"your process"` ⊂ query) | 0.10 |
+| Multi-word loose (all tokens word-matched, gaps allowed: `"your design process"` matches `"your process"`) | 0.05 |
+| Single-word, word-boundary match | 0.05 |
+
+After scoring, the worker picks an outcome:
+
+1. **High confidence** — top intent score ≥ `HIGH_CONFIDENCE` (0.68) → route there regardless of vector content. Lets query-pattern intents (e.g., Pricing — no indexed content by design) win on their own evidence.
+2. **Content-backed** — top intent above `ABS_THRESHOLD` (0.55) AND top vector score ≥ `contentFloor` (0.6, configurable per-site via `search.not_found_threshold`) → route to top intent.
+3. **No relevant content** — vector top score < `contentFloor` AND detection didn't hit high confidence → route to **Not Found** system intent.
+4. **Ambiguous** — top1 score doesn't beat top2 by `AMBIGUITY_MARGIN` (0.02) → fall through to admin's **Default** system intent.
+
+Tunables live in `src/search/detection.ts` and `src/search/pipeline.ts`. The `/search` response now includes a `detection` block (`reason`, `top_vector_score`, `score`, `top2` with components) for tuning.
 
 ### Three-Pass Re-Ranking
 After vector search returns `initial_topK` results (default 15), three re-ranking passes refine the order before slicing to `final_topK` (default 3) for the behavior.
 
-1. **Pass 1 - Metadata Boost:** Boosts results whose metadata fields match the detected intent's `metadata_matches` criteria. Fast, zero KV reads.
-2. **Pass 2 - Full Text Fetch:** Fetches full document text from KV for the top 8 candidates after metadata boosting.
+1. **Pass 1 - Metadata + Query-Token Overlap Boost:** Two boosts in one pass, applied to **all** matches (before the top-8 candidate slice):
+   - Intent-driven: results whose metadata matches the intent's `metadata_matches` criteria (collection, page_kind, path prefix, title contains).
+   - Query-driven: each non-stopword token from the user's query that appears in this page's `metadata.title` adds **+0.20** (cap **+0.40** total); a path-only hit adds **+0.05**. This catches "name in query equals page title" cases — e.g. `"Who is Shae?"` against the team-leaders collection — where pure embedding similarity could rank a different person's page higher and (with low `final_topK`) keep the right page out of the LLM's context. Because this runs before the candidate slice, a strong title-overlap match can be promoted into the top 8 even when its raw embedding rank was lower.
+   - Fast, zero KV reads.
+2. **Pass 2 - Full Text Fetch:** Fetches full document text from KV for the top 8 candidates after Pass 1.
 3. **Pass 3 - Keyword Boost:** Boosts results whose full text contains query keywords and/or the detected intent's keywords. Uses combined, deduplicated keyword set from both sources.
 
 The final re-ranked results are sliced to `final_topK` and passed to the behavior handler.
@@ -188,18 +218,27 @@ Each custom intent can override the site-level LLM settings:
 Fallback chain: intent setting → site config setting → system default.
 
 ### Response Format
-All `/ask` and `/search` responses include `intent` and `behavior` fields:
+All `/ask` and `/search` responses include `intent` and `behavior` fields. `/search` additionally returns a `detection` block for tuning visibility.
 
 ```json
 {
   "ok": true,
-  "q": "What services do you offer?",
+  "q": "Show me your services",
   "answer": "We offer a range of professional services:",
   "behavior": "short_blurb_with_list",
-  "intent": "services",
+  "intent": "Page Lists",
   "concreteDirective": { "type": "render_children", "pageId": 42, "sortBy": "weight" },
   "sources": [{ "title": "Services", "url": "/services", "score": 0.89 }],
-  "stats": { "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast", "cached": false, "..." : "..." }
+  "stats": { "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast", "cached": false, "..." : "..." },
+  "detection": {
+    "reason": "matched",
+    "top_vector_score": 0.682,
+    "score": 0.914,
+    "top2": [
+      { "name": "Page Lists", "score": 0.914, "components": { "embedding": 0.699, "keyword": 0.20, "metadata": 0.016 } },
+      { "name": "Services",   "score": 0.882, "components": { "embedding": 0.712, "keyword": 0.05, "metadata": 0.120 } }
+    ]
+  }
 }
 ```
 
@@ -374,7 +413,22 @@ Response:
 ```
 
 
-### 5) Debug: GET /debug/embed
+### 5) Admin: POST /admin/embed
+Compute a BGE-1024 embedding vector for arbitrary text. Used by the CMS to re-embed an intent's `(name + description + examples + keywords)` source whenever any of those fields change, then write the resulting vector back to the intent record's `detectionEmbedding` column.
+
+HMAC-protected (X-Worx-Timestamp + X-Worx-Signature). Same auth as every other route.
+
+Request body:
+```json
+{ "site": "<site>", "text": "<source text to embed>" }
+```
+
+Response:
+```json
+{ "ok": true, "vector": [0.012, -0.034, ...], "dims": 1024 }
+```
+
+### 6) Debug: GET /debug/embed
 Sanity‑check embed model/dimensions.
 
 ```

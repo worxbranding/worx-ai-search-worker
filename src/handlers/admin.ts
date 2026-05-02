@@ -1,6 +1,7 @@
 import { json } from "../http/response";
 import { log, startTimer, time } from "../lib/logging";
-import type { Env, ExecutionContext, KVNamespace } from "../lib/types";
+import type { Env, ExecutionContext, KVNamespace, SiteConfig } from "../lib/types";
+import { embed } from "../search/vectorize";
 
 /**
  * Delete all KV keys that share the provided prefix. When waitUntil is
@@ -123,4 +124,37 @@ export async function handleClearCache(
     results,
     note: ctx?.waitUntil ? "Deletes queued asynchronously" : "Deletes completed synchronously",
   });
+}
+
+/**
+ * Embed a single text string with the same model the search pipeline
+ * uses, return the raw vector. The CMS calls this when an intent is saved
+ * so a fresh detection embedding gets stored. HMAC-protected by the
+ * worker's standard signing path (same as /admin/clear-cache).
+ */
+export async function handleAdminEmbed(
+  req: Request,
+  env: Env,
+  cfg: SiteConfig,
+  body: { text?: string } | undefined
+): Promise<Response> {
+  const stop = startTimer("handleAdminEmbed");
+  const text = String((body?.text ?? "")).trim();
+  if (text === "") {
+    stop();
+    return json({ ok: false, error: "Missing field 'text'" }, { status: 400 });
+  }
+  try {
+    const vector = await embed(env, cfg.ai.embed_model, cfg.vectorize.dims, text);
+    stop();
+    return json({
+      ok: true,
+      model: cfg.ai.embed_model,
+      dims: cfg.vectorize.dims,
+      vector,
+    });
+  } catch (error: any) {
+    stop();
+    return json({ ok: false, error: String(error?.message || error) }, { status: 500 });
+  }
 }

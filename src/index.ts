@@ -5,7 +5,7 @@ import { verifyHmac } from "./lib/hmac";
 import { handleStatus } from "./handlers/status";
 import { handleSearch } from "./handlers/search";
 import { handleAsk } from "./handlers/ask";
-import { handleClearCache } from "./handlers/admin";
+import { handleAdminEmbed, handleClearCache } from "./handlers/admin";
 import {
   handleDebugEmbed,
   handleDebugListIds,
@@ -89,6 +89,14 @@ export default {
           originAllow,
           await time("route:/admin/clear-cache", () =>
             handleClearCache(req, env, body as any, ctx)
+          )
+        );
+      }
+      if (req.method === "POST" && pathname === "/admin/embed") {
+        return withCors(
+          originAllow,
+          await time("route:/admin/embed", () =>
+            handleAdminEmbed(req, env, cfg, body as any)
           )
         );
       }

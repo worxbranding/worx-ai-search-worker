@@ -41,6 +41,7 @@ export async function handleSearch(
     allKeywords,
     initial_topK,
     final_topK,
+    detection,
   } = await executeSearchPipeline(q, site, cfg, env, ctx, cache);
 
   // Build response with detailed pipeline info
@@ -58,14 +59,14 @@ export async function handleSearch(
     },
     intent: {
       name: intent.name,
-      priority: intent.priority,
       behavior: behaviorName,
     },
+    detection,
     pipeline: {
       description: "Search + re-ranking pipeline (shared with /ask endpoint)",
-      stage1: "Detect intent from query keywords",
-      stage2: "Run vector search (fetch initial_topK)",
-      stage3: "Detect intent from result metadata",
+      stage1: "Embed query and run vector search (fetch initial_topK)",
+      stage2: "Not-found short-circuit on low top-score / spread",
+      stage3: "Score-based intent detection (embedding + keyword + metadata)",
       stage4: "Metadata boosting (collection, path, page_kind)",
       stage5: "Fetch full text for top candidates",
       stage6: "Keyword boosting using query + intent keywords",

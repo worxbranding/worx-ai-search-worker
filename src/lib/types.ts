@@ -76,8 +76,11 @@ export interface CustomIntent {
   system_prompt?: string;
   chat_model?: string;
   answer_model?: AnswerModel;
-  priority: number;
+  /** @deprecated No longer used by detection — kept optional for back-compat with old KV payloads. */
+  priority?: number;
   enabled?: boolean;
+  /** Package-owned fallback (Default, Not Found). UI hides delete; pipeline routes no-match queries here. */
+  is_system?: boolean;
   /** Per-intent tuning overrides — undefined = inherit site default. */
   chat_temperature?: number;
   initial_topK?: number;
@@ -87,6 +90,8 @@ export interface CustomIntent {
   max_kv_text_chars?: number;
   detection: {
     keywords?: string[];
+    description?: string;
+    examples?: string[];
     metadata_matches?: {
       title_contains?: string[];
       page_kind?: string;
@@ -94,6 +99,8 @@ export interface CustomIntent {
       path_starts_with?: string;
     };
   };
+  /** Pre-computed embedding of (name + description + examples + keywords). */
+  detection_embedding?: number[];
 }
 
 /** Per-site configuration retrieved from KV. */
@@ -120,6 +127,17 @@ export type SiteConfig = {
     answer_cache_ttl?: number;
     embed_cache_ttl?: number;
     caching?: boolean;
+    /**
+     * Cosine-similarity floor below which the worker treats a query as
+     * "no relevant match found" and routes to the Not Found system
+     * intent. Default 0.5.
+     */
+    not_found_threshold?: number;
+    /**
+     * Cosine-similarity floor for matching the query embedding against
+     * an intent's pre-computed detection_embedding. Default 0.55.
+     */
+    intent_embedding_threshold?: number;
   };
 };
 

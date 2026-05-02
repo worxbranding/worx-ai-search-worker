@@ -28,10 +28,22 @@ export function extractKeywords(query: string): string[] {
 /**
  * Apply metadata-based boosting (collection, page_kind, path, title).
  * This pass is fast and doesn't require fetching full text from KV.
+ *
+ * Also applies a per-result *query-token* title/path overlap boost: if any
+ * non-stopword token from the user's query appears in this page's title or
+ * URL path, the page gets a meaningful boost. This is what catches "the name
+ * in the query equals the page title" cases like "Who is Shae?" — where pure
+ * embedding similarity could otherwise rank a different team-member page
+ * higher and (with low top_k) keep the right page out of the LLM's context.
+ *
+ * This pass runs on ALL matches before the top-8 candidate slice, so the
+ * boost can pull a relevant page into the candidate set even when its raw
+ * embedding rank was outside the top 8.
  */
 export function applyMetadataBoost(
   matches: SearchMatch[],
-  metadataMatches: Record<string, any>
+  metadataMatches: Record<string, any>,
+  queryTokens: string[] = []
 ): SearchMatch[] {
   return matches.map((match) => {
     const metadata = (match.metadata || {}) as Record<string, any>;
@@ -70,6 +82,33 @@ export function applyMetadataBoost(
           boostDetails.push(`title contains "${term}" (+0.15)`);
           break;
         }
+      }
+    }
+
+    // Query-token overlap with this page's title / path. Title hits weigh
+    // more than path hits. Capped at +0.40 so it can promote a missed page
+    // into the candidate set without swamping intent-driven boosts.
+    if (queryTokens.length > 0) {
+      const titleLower = String(metadata.title || '').toLowerCase();
+      const pathLower  = String(metadata.path  || '').toLowerCase();
+      let queryBoost = 0;
+      const titleHits: string[] = [];
+      const pathHits: string[] = [];
+      for (const tok of queryTokens) {
+        if (!tok) continue;
+        if (titleLower.includes(tok)) {
+          queryBoost += 0.20;
+          titleHits.push(tok);
+        } else if (pathLower.includes(tok)) {
+          queryBoost += 0.05;
+          pathHits.push(tok);
+        }
+      }
+      if (queryBoost > 0.40) queryBoost = 0.40;
+      if (queryBoost > 0) {
+        boost += queryBoost;
+        if (titleHits.length) boostDetails.push(`query token(s) in title [${titleHits.join(',')}] (+${queryBoost.toFixed(2)})`);
+        else if (pathHits.length) boostDetails.push(`query token(s) in path [${pathHits.join(',')}] (+${queryBoost.toFixed(2)})`);
       }
     }
 
