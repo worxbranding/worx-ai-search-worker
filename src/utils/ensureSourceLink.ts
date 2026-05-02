@@ -19,27 +19,27 @@
 
 type Source = { title?: string; url?: string; score?: number; [k: string]: unknown };
 
-const MARKDOWN_LINK_RE = /\[[^\]]+\]\(([^)\s]+)/g;
-
 export function ensureSourceLink(answer: string, sources: Source[]): string {
   if (!answer || !sources || sources.length === 0) return answer;
 
-  const sourceUrls = new Set(
-    sources.map((s) => normalizeUrl(s.url)).filter((u): u is string => !!u),
-  );
-  if (sourceUrls.size === 0) return answer;
+  const sourceUrls = sources
+    .map((s) => normalizeUrl(s.url))
+    .filter((u): u is string => !!u);
+  if (sourceUrls.length === 0) return answer;
 
-  // Already linking to at least one of the sources?
-  for (const m of answer.matchAll(MARKDOWN_LINK_RE)) {
-    const linkUrl = normalizeUrl(m[1]);
-    if (linkUrl && sourceUrls.has(linkUrl)) return answer;
+  // Skip the append whenever the answer already references any source URL
+  // in *any* form — markdown link `[...](url)`, parenthetical `(url)`, or
+  // bare URL. Small models often skip the proper `[anchor](url)` syntax
+  // and just write `(https://...)` next to the text; that still drives
+  // the user to the page, so don't pile a redundant "Read more:" on top.
+  const answerNorm = answer.toLowerCase();
+  for (const u of sourceUrls) {
+    if (answerNorm.includes(u.toLowerCase())) return answer;
   }
 
-  // Pick the top source (highest score = first after re-rank).
+  // No source URL appears anywhere in the text — append the top source as a CTA.
   const top = sources[0];
   if (!top?.url || !top?.title) return answer;
-
-  // Trim trailing whitespace from the answer, then append the CTA on its own line.
   const trimmed = answer.replace(/\s+$/, "");
   return `${trimmed}\n\n**Read more:** [${top.title}](${top.url})`;
 }
