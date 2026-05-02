@@ -33,12 +33,14 @@ export async function executeSearchPipeline(
   allKeywords: string[];
   initial_topK: number;
   final_topK: number;
-  /** Detection telemetry surfaced to /search for tuning. */
+  /** Detection telemetry surfaced to /search and /ask for tuning. */
   detection?: {
     reason: string;
     top_vector_score: number;
     score?: number;
-    top2?: Array<{ name: string; score: number; components: { embedding: number; keyword: number; metadata: number } }>;
+    threshold?: number;
+    margin?: number;
+    top_intents?: Array<{ name: string; score: number; components: { embedding: number; keyword: number; metadata: number } }>;
   };
 }> {
   const customIntents = cfg.custom_intents || [];
@@ -103,8 +105,22 @@ export async function executeSearchPipeline(
   let detectionScore = 0;
   let detection: ReturnType<typeof detectIntent> = { intent: null, reason: "no_intents" };
   if (!detectedIntent) {
+    // Short openers like "Who are you?" / "What is WORX?" can't carry enough
+    // signal to clear the standard threshold even when an intent's examples
+    // include them — there's just not enough text to embed against. Relax
+    // the bar for ≤4-word queries so they don't fall through to Default
+    // when an intent is plainly relevant.
+    const wordCount = query.trim().split(/\s+/).filter(Boolean).length;
+    const isShort = wordCount > 0 && wordCount <= 4;
+    const shortQueryThreshold = isShort ? 0.45 : undefined;
+    // Short queries also tend to tie multiple intents within ~0.01 because
+    // there isn't enough text to break a tie. Drop the ambiguity margin so
+    // a near-tie doesn't blackhole an obviously-relevant intent.
+    const shortQueryMargin = isShort ? 0.001 : undefined;
+    const cfgThreshold = cfg.search?.intent_embedding_threshold;
     detection = detectIntent(query, vector as unknown as number[], matches, customIntents, {
-      threshold: cfg.search?.intent_embedding_threshold,
+      threshold: shortQueryThreshold ?? cfgThreshold,
+      margin: shortQueryMargin,
     });
     detectionReason = detection.reason;
     detectionScore = detection.score ?? 0;
@@ -112,7 +128,7 @@ export async function executeSearchPipeline(
       "[IntentDetect] reason=", detection.reason,
       "topScore=", detection.score?.toFixed(4),
       "components=", JSON.stringify(detection.components),
-      "top2=", JSON.stringify(detection.top2)
+      "top=", JSON.stringify(detection.top_intents)
     );
     if (detection.intent) {
       const highConf = detectionScore >= HIGH_CONFIDENCE;
@@ -151,7 +167,9 @@ export async function executeSearchPipeline(
             reason: detectionReason || "no_relevant_content",
             top_vector_score: topVectorScore,
             score: detectionScore,
-            top2: detection.top2,
+            threshold: detection.threshold,
+            margin: detection.margin,
+            top_intents: detection.top_intents,
           },
         };
       }
@@ -239,7 +257,9 @@ export async function executeSearchPipeline(
       reason: detectionReason || "matched",
       top_vector_score: topVectorScore,
       score: detectionScore,
-      top2: detection.top2,
+      threshold: detection.threshold,
+      margin: detection.margin,
+      top_intents: detection.top_intents,
     },
   };
 }

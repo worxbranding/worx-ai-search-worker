@@ -55,8 +55,11 @@ export interface IntentDetectionResult {
   reason: "matched" | "below_threshold" | "ambiguous" | "no_intents";
   score?: number;
   components?: { embedding: number; keyword: number; metadata: number };
-  /** Top two scored candidates for telemetry/calibration. */
-  top2?: Array<{ name: string; score: number; components: ScoredIntent["components"] }>;
+  /** Threshold + margin used in this evaluation (so the dashboard can show why something fell short). */
+  threshold?: number;
+  margin?: number;
+  /** Top scored candidates for telemetry / dashboard diagnostics. */
+  top_intents?: Array<{ name: string; score: number; components: ScoredIntent["components"] }>;
 }
 
 /** Cosine similarity between two equal-length vectors. */
@@ -210,7 +213,7 @@ export function detectIntent(
   scored.sort((a, b) => b.score - a.score);
   const top1 = scored[0];
   const top2 = scored[1];
-  const top2Summary = scored.slice(0, 2).map((s) => ({
+  const topSummary = scored.slice(0, 5).map((s) => ({
     name: s.intent.name,
     score: Number(s.score.toFixed(4)),
     components: {
@@ -226,7 +229,9 @@ export function detectIntent(
       reason: "below_threshold",
       score: top1?.score,
       components: top1?.components,
-      top2: top2Summary,
+      threshold,
+      margin,
+      top_intents: topSummary,
     };
   }
   if (top2 && top1.score - top2.score < margin) {
@@ -235,7 +240,9 @@ export function detectIntent(
       reason: "ambiguous",
       score: top1.score,
       components: top1.components,
-      top2: top2Summary,
+      threshold,
+      margin,
+      top_intents: topSummary,
     };
   }
   return {
@@ -243,7 +250,9 @@ export function detectIntent(
     reason: "matched",
     score: top1.score,
     components: top1.components,
-    top2: top2Summary,
+    threshold,
+    margin,
+    top_intents: topSummary,
   };
 }
 

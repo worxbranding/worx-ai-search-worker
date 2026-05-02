@@ -52,6 +52,12 @@ export function extractResponse(chat: unknown): string | null {
  *   inject these as fake citations without the matching definitions, and
  *   the markdown renderer shows the literal `[^1]` to the user. Drop both
  *   the inline markers and any trailing definition lines (`[^1]: ...`).
+ * - Bare numbered citation markers (`[1]`, `[2]`) — same pattern but
+ *   without the caret. Skip when followed by `(` because that's a real
+ *   markdown link with a numeric anchor, not a citation footnote.
+ * - Trailing "Sources:" / "References:" / "Citations:" dump blocks where
+ *   small models pile up `[1] https://... [2] https://...` lines that
+ *   should have been inline links in the first place.
  * - Common chain-of-thought lead-ins from open-weights models that
  *   occasionally leak past the system prompt ("We need to answer:",
  *   "Okay, let me think...", etc.).
@@ -62,6 +68,17 @@ function cleanLlmOutput(text: string): string {
   s = s.replace(/^\s*\[\^[^\]]+\]:.*$/gm, "");
   // Drop inline footnote refs: `[^anything]`
   s = s.replace(/\[\^[^\]]+\]/g, "");
+  // Drop bare numeric citation markers: `[1]`, `[12]` — but not `[1](url)`
+  // (a real markdown link with a numeric anchor) and not `[1]:` (a markdown
+  // reference-style link definition, which renders correctly).
+  s = s.replace(/\[(\d{1,2})\](?![(\:])/g, "");
+  // Drop a trailing citation dump block — "Sources:" / "References:" /
+  // "Citations:" header followed only by lines that look like bare URLs or
+  // numbered URL pairs. Stops at a blank line that isn't part of the dump.
+  s = s.replace(
+    /\n+\s*\*{0,2}(?:Sources|References|Citations)\*{0,2}:?\s*\n(?:\s*(?:\d+[.)]\s*|\[\d+\]\s*|-\s*)?https?:\/\/[^\s]+(?:\s+https?:\/\/[^\s]+)*\s*\n?)+\s*$/i,
+    "",
+  );
   // Drop a leading chain-of-thought block (gpt-oss tells)
   s = s.replace(
     /^(we need to answer|okay,?\s+let|so we|let me think|first,?\s+we|ok,?\s+the user|the user is asking)[^\n]*\n+/i,
