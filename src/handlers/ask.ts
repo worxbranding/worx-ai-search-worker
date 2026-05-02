@@ -75,7 +75,14 @@ function buildDiagnosis(args: {
   /** Whether the matched intent has a curated appended prompt. When true, the
    * intent author has explicitly shaped the response — so topic-not-covered
    * is almost certainly intentional (e.g. Pricing intent always redirects
-   * to the contact form regardless of source content). Skip the signal. */
+   * to the contact form regardless of source content). Skip the signal.
+   *
+   * NOTE: this overloads "has appended prompt" to mean "redirect-style intent".
+   * Today every prompted intent IS redirect-style (Pricing, Strategic Goals,
+   * Contact Information, Methodology). If a marketer later adds a *style-only*
+   * prompt (e.g. "always use bullet points") to a content-dependent intent like
+   * Services, this would suppress the signal there too — wrong. If that
+   * happens, swap to an explicit `redirect_style: true` flag on the intent. */
   intentHasAppendedPrompt?: boolean;
 }): {
   severity: "good" | "soft" | "bad";
@@ -279,7 +286,7 @@ export async function handleAsk(
     final_k: final_topK,
     behavior: behaviorName,
     intent: intent.name,
-    customPromptHash: intent.system_prompt ? await sha1Hex(intent.system_prompt) : null,
+    customPromptHash: intent.system_prompt && intent.system_prompt.trim() ? await sha1Hex(intent.system_prompt) : null,
   });
   const ansKey = `ans:${await sha1Hex(ansKeyRaw)}`;
 
