@@ -196,7 +196,9 @@ After scoring, the worker picks an outcome:
 3. **No relevant content** — vector top score < `contentFloor` AND detection didn't hit high confidence → route to **Not Found** system intent.
 4. **Ambiguous** — top1 score doesn't beat top2 by `AMBIGUITY_MARGIN` (0.02) → fall through to admin's **Default** system intent.
 
-Tunables live in `src/search/detection.ts` and `src/search/pipeline.ts`. The `/search` response now includes a `detection` block (`reason`, `top_vector_score`, `score`, `top2` with components) for tuning.
+**Short-query relaxation.** Queries of ≤4 words ("Who are you?", "What is WORX?") drop to threshold 0.45 and ambiguity margin 0.001. There isn't enough text in a short query to reliably clear the standard bar even when an intent is plainly relevant — without this, identity questions black-hole into Default.
+
+Tunables live in `src/search/detection.ts` and `src/search/pipeline.ts`. The `/search` and `/ask` responses include a detection block (`reason`, `top_vector_score`, `score`, `threshold`, `margin`, `top_intents` with components) for tuning.
 
 ### Three-Pass Re-Ranking
 After vector search returns `initial_topK` results (default 15), three re-ranking passes refine the order before slicing to `final_topK` (default 3) for the behavior.
@@ -230,7 +232,7 @@ All previously-hardcoded numeric tunables live in **`src/lib/configDefaults.ts`*
 WORX defaults are tuned for marketing-site content (short pages, title-heavy semantics). A site with deep URL hierarchies may want to raise `metadata_path_prefix`; a site with very long pages may want to lean on `keyword_in_full_text`.
 
 ### Response Format
-All `/ask` and `/search` responses include `intent` and `behavior` fields. `/search` additionally returns a `detection` block for tuning visibility.
+All `/ask` and `/search` responses include `intent` and `behavior` fields. `/ask` additionally returns `_intent_detection` (the raw scoring) and `_diagnosis` (a marketing-shaped summary) so the Training tab can render a "What happened?" panel without exposing the scoring matrix to non-technical users.
 
 ```json
 {
@@ -242,17 +244,40 @@ All `/ask` and `/search` responses include `intent` and `behavior` fields. `/sea
   "concreteDirective": { "type": "render_children", "pageId": 42, "sortBy": "weight" },
   "sources": [{ "title": "Services", "url": "/services", "score": 0.89 }],
   "stats": { "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast", "cached": false, "..." : "..." },
-  "detection": {
+  "_intent_detection": {
     "reason": "matched",
     "top_vector_score": 0.682,
     "score": 0.914,
-    "top2": [
+    "threshold": 0.55,
+    "margin": 0.02,
+    "top_intents": [
       { "name": "Page Lists", "score": 0.914, "components": { "embedding": 0.699, "keyword": 0.20, "metadata": 0.016 } },
       { "name": "Services",   "score": 0.882, "components": { "embedding": 0.712, "keyword": 0.05, "metadata": 0.120 } }
     ]
+  },
+  "_diagnosis": {
+    "severity": "good",
+    "signals": ["strong_match"],
+    "headline": "Matched Page Lists cleanly",
+    "explanation": "",
+    "query": "Show me your services",
+    "closest_intent": "Page Lists",
+    "runner_up_intent": "Services",
+    "top_source_title": "Services"
   }
 }
 ```
+
+#### `_diagnosis` signals
+
+| Signal | Severity | Meaning |
+|---|---|---|
+| `strong_match` | good | Routed cleanly with content backing. |
+| `close_call` | soft | Routed correctly but a runner-up is within 0.10 — watch if a different phrasing routes wrong. |
+| `thin_content` | soft | Routed correctly but the top page doesn't strongly cover the question. |
+| `topic_not_covered` | soft | Routing matched but no source title/URL contains a distinctive query token — likely a content gap or invented answer. **Suppressed when the matched intent has a curated appended prompt** (Pricing, Strategic Goals, Contact Information, Methodology), since those intents redirect by design regardless of source content. |
+| `no_intent` | soft | Detection fell below threshold or was ambiguous — fell through to Default. |
+| `no_content` | bad | Vector search returned nothing relevant (or top score < 0.30) — Not Found short-circuit fired. |
 
 ## Logging controls
 - Centralized in `src/log.ts` with a simple flag:
