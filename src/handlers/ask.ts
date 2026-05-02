@@ -5,6 +5,7 @@ import { getBehavior } from "../behaviors";
 import type { BehaviorResponse } from "../behaviors";
 import { sha1Hex } from "../utils/crypto";
 import { isNoAnswer } from "../utils/isNoAnswer";
+import { ensureSourceLink } from "../utils/ensureSourceLink";
 import { providerForModel } from "../utils/providerForModel";
 import { executeSearchPipeline } from "../search/pipeline";
 import { mergeIntentTuning } from "../lib/llm";
@@ -174,6 +175,24 @@ export async function handleAsk(
       env,
     })
   );
+
+  // Drive traffic: every answer should link the user to the page it cites.
+  // Small models sometimes skip the link even when prompted to include one,
+  // so guarantee at least one link by appending one if the answer doesn't
+  // already contain a markdown link to one of the sources. Skip when:
+  //   - The behavior produced a `concreteDirective` (the CMS will render a
+  //     full list of links separately — adding another would be redundant).
+  //   - There are no sources to link to.
+  //   - The answer is the canned "no information" / Not Found response.
+  if (
+    behaviorResponse.answer &&
+    !behaviorResponse.concreteDirective &&
+    Array.isArray(behaviorResponse.sources) &&
+    behaviorResponse.sources.length > 0 &&
+    !isNoAnswer(behaviorResponse.answer)
+  ) {
+    behaviorResponse.answer = ensureSourceLink(behaviorResponse.answer, behaviorResponse.sources);
+  }
 
   // Cache the response
   // Default: 30 days (2592000s). Will be cleared on ingest for fresh answers.

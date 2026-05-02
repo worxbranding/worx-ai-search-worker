@@ -12,6 +12,7 @@
  *     it's better to not produce them in the first place.
  */
 const FORMAT_GUARDRAILS = `**Output format guardrails (always apply)**
+- This is a SEARCH widget. Every answer MUST drive the user to a real page on the site by including at least one inline Markdown link to a URL from the supplied source list. The whole point is to send the user to the page; do not just summarize and stop.
 - Do NOT use Markdown footnote syntax. Never write \`[^1]\`, \`[^note]\`, or any \`[^...]\` reference. Cite sources as inline Markdown links only.
 - Do NOT prefix the answer with meta-narration ("We need to answer...", "Let me think...", "The user is asking..."). Start directly with the answer.`;
 
