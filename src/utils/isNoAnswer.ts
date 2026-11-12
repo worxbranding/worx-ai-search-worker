@@ -10,6 +10,8 @@ const NO_ANSWER_SUBSTRINGS: string[] = [
     "couldn't locate that information in the current worx content",
     "could not locate that information in the current worx content",
     "could not find an answer based on the available information",
+    // CollectionOverview's empty-matches reply.
+    "couldn't find that collection or category",
 ];
 
 /** Normalize punctuation and whitespace for comparison against patterns. */

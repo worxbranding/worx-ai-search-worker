@@ -293,8 +293,14 @@ export async function handleAsk(
   if (cache.answer) {
     try {
       const cachedRaw = await env.CACHE.get<string>(ansKey, "text");
-      if (cachedRaw && cachedRaw.trim()) {
-        const cachedResponse = JSON.parse(cachedRaw) as BehaviorResponse;
+      const cachedParsed = cachedRaw && cachedRaw.trim() ? (JSON.parse(cachedRaw) as BehaviorResponse) : null;
+      // A no-answer that got cached (e.g. while the index was empty) must
+      // not keep being served once content is back: treat it as a miss.
+      if (cachedParsed && cachedParsed.answer && isNoAnswer(cachedParsed.answer)) {
+        log("[cachedAnswer] IGNORE no-answer entry", ansKey);
+      }
+      if (cachedParsed && !(cachedParsed.answer && isNoAnswer(cachedParsed.answer))) {
+        const cachedResponse = cachedParsed;
         log("[cachedAnswer] HIT", ansKey);
 
         const nowIso = new Date().toISOString();
@@ -389,7 +395,13 @@ export async function handleAsk(
   // Cache the response
   // Default: 30 days (2592000s). Will be cleared on ingest for fresh answers.
   const ansTtl = Math.max(60, Math.min(31536000, Number(cfg.search?.answer_cache_ttl ?? 2592000)));
-  if (cache.answer) {
+  // Never cache an answer built from zero matches or a no-answer reply:
+  // either is only true until the index (re)fills, and the TTL is 30 days.
+  const skipAnswerCache = finalMatches.length === 0 || (!!behaviorResponse.answer && isNoAnswer(behaviorResponse.answer));
+  if (skipAnswerCache && cache.answer) {
+    log("[cachedAnswer] SKIP-STORE", ansKey, finalMatches.length === 0 ? "no matches" : "no-answer reply");
+  }
+  if (cache.answer && !skipAnswerCache) {
     try {
       const cacheValue = JSON.stringify(behaviorResponse);
       if (ctx?.waitUntil && env.CACHE.put) {

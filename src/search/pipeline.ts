@@ -132,7 +132,12 @@ export async function executeSearchPipeline(
     );
     if (detection.intent) {
       const highConf = detectionScore >= HIGH_CONFIDENCE;
-      if (highConf || !noRelevantContent) {
+      if (matches.length === 0) {
+        // Nothing in the index for this site (e.g. mid clear/re-ingest).
+        // Even a high-confidence intent has nothing to answer from, so
+        // fall through to Not Found instead of an empty behavior answer.
+        log("[Intent] Detected", detection.intent.name, "but 0 matches — falling through to Not Found");
+      } else if (highConf || !noRelevantContent) {
         detectedIntent = detection.intent;
         log("[Intent] Routed to:", detectedIntent.name, highConf ? "(high-confidence)" : "(content-backed)");
       } else {

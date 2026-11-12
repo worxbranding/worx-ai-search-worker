@@ -24,4 +24,7 @@ assert.equal(isNoAnswer(realAnswer), false, "Apologetic tone alone should not co
 const blank = "   ";
 assert.equal(isNoAnswer(blank), true, "Blank responses should count as no-answer");
 
+const emptyCollection = "I couldn't find that collection or category.";
+assert.equal(isNoAnswer(emptyCollection), true, "CollectionOverview empty-matches reply should be no-answer");
+
 console.log("isNoAnswer tests passed");
