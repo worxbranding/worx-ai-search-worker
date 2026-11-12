@@ -27,3 +27,5 @@ yarn-error.log*
 # Environment files
 .env
 .env.*
+.dev.vars
+.dev.vars.*

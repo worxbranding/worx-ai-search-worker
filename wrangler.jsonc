@@ -1,5 +1,6 @@
 {
   "name": "worx-search",
+  "account_id": "659d1413091a90d93fa7097f2941b2cf",
   "main": "src/index.ts",
   "compatibility_date": "2024-10-01",
 
@@ -23,7 +24,8 @@
     },
     {
       "binding": "CONTENT",
-      "id": "c8e9cf82653944a585c223917c70ebc8"
+      "id": "c8e9cf82653944a585c223917c70ebc8",
+      "remote": true
     }
   ],
 
