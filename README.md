@@ -1,6 +1,6 @@
 # WORX AI Search Worker
 
-A Cloudflare Worker that provides semantic search and Q&A over site content using Cloudflare Vectorize (v2) and Workers AI. It’s multi-tenant (per-site) with API key protection, CORS controls, optional caching, robust logging, and several debug/admin utilities.
+A Cloudflare Worker that provides semantic search and Q&A over site content using Cloudflare Vectorize (v2) and Workers AI. It’s multi-tenant (per-site) with HMAC request signing, CORS controls, optional caching, robust logging, and several debug/admin utilities.
 
 This README explains how it works, how to configure it, and all the ways to interact with it.
 
@@ -8,7 +8,7 @@ This README explains how it works, how to configure it, and all the ways to inte
 ## Architecture overview
 - Vector store: Cloudflare Vectorize (binding: `VECTORIZE`) containing document embeddings.
 - Inference: Workers AI (binding: `AI`) for both embeddings and chat responses.
-- State/config: Cloudflare KV (binding: `CONFIG`) for per-site configuration, document texts, and caches.
+- State: Cloudflare KV — `CONTENT` for document texts, `CACHE` for answer/embedding caches. There is no stored per-site config: the CMS posts it with each request (see below).
 - Behavior system: 10 built-in response behaviors selected by custom intent detection.
 - Search pipeline: single-pass scored intent detection (embedding + keyword + metadata, no priority list) with tiered confidence + content-floor gating, followed by three-pass re-ranking.
 - Worker routes: REST endpoints for status, search, ask, embed, admin cache control, and debugging.
@@ -16,66 +16,48 @@ This README explains how it works, how to configure it, and all the ways to inte
 
 ## Bindings and environment
 Bindings are defined in `wrangler.jsonc`:
-- **VECTORIZE**: Vectorize index (remote) used by the worker
+- **VECTORIZE**: Vectorize index `worx-ai-index` (remote)
 - **AI**: Workers AI for embeddings and LLM inference
-- **WORX_AI_CONFIG**: KV namespace for per-site configuration (`cfg:<site>`)
-- **WORX_AI_CONTENT**: KV namespace for stored document texts (`doc:<site>:...`) from ingest pipeline
-- **CONFIG** (legacy name for WORX_AI_CONFIG): Used for:
-  - `ans:<hash>` — short-TTL answer cache for /ask
-  - `qemb:<hash>` — short-TTL embedding cache for queries
-- **ALLOWED_ORIGINS** (var): comma-separated list of origins allowed by CORS, used when a site config does not specify its own list.
+- **CONTENT** (KV namespace `WORX_AI_CONTENT`): document texts (`doc:<site>:...`), written by the ingest worker
+- **CACHE** (KV namespace `WORX_AI_CACHE`): caches only —
+  - `ans:<hash>` — answer cache for /ask
+  - `qemb:<hash>` — query embedding cache
+  - Any leftover `cfg:*` rows here are inert; nothing reads them.
+- **Vars**: `EMBED_MODEL`, `VECTORIZE_DIMS`, `VECTORIZE_METRIC` (deploy-time constants; must match how the index was built), `AI_GATEWAY_ACCOUNT_ID`, `AI_GATEWAY_SLUG`, `ALLOWED_ORIGINS` (CORS fallback list)
+- **Secrets**: `WORX_HMAC_SECRET` (required), `WORX_HMAC_SECRET_PREVIOUS` (optional, for rotation overlap), plus provider keys for non-Cloudflare answer models.
 
-Example (see existing `wrangler.jsonc` in the repo):
-
-```
-{
-  "vectorize": [ { "binding": "VECTORIZE", "index_name": "worx-ai-index", "remote": true } ],
-  "ai": { "binding": "AI" },
-  "kv_namespaces": [ { "binding": "CONFIG", "id": "<prod-id>", "preview_id": "<preview-id>" } ],
-  "vars": { "ALLOWED_ORIGINS": "http://localhost:5173,http://localhost:3000" }
-}
-```
+See `wrangler.jsonc` in the repo for the exact IDs.
 
 
-## Per-site configuration (KV: cfg:<site>)
-Create a JSON object in KV under key `cfg:<site>`. Required fields are marked.
+## Per-site configuration (in-band, per request)
+The old `cfg:<site>` KV row and the config-admin tool are retired. The worker
+builds each request's site config from the env vars above plus the JSON body
+the CMS (the Concrete `worx_ai` package) posts — see `src/config/siteConfig.ts`.
 
 ```
 {
-  "site_key": "worxbranding-dev",
-  "vectorize": { "index_name": "worx-ai-index", "dims": 1024, "metric": "cosine" },  // required
-  "ai": { "embed_model": "@cf/baai/bge-large-en-v1.5" },                               // required
-  "api_key": "dev-secret-123",                                                          // optional, can also set under search.api_key
-  "default_behavior": "long_form_answer",    // fallback behavior when no intent matches (default: long_form_answer)
-  "custom_intents": [ ... ],                 // array of custom intent objects (see Intent Detection section)
-  "search": {
-    "allowed_origins": ["http://localhost:5173", "https://your-frontend.app"],
-    "api_key": "dev-secret-123",             // API key required on protected endpoints via header x-api-key
-    "chat_model": "@cf/meta/llama-3.1-8b-instruct",
+  "site": "worxbranding-dev",        // routing key: Vectorize metadata filter + cache key prefix (not auth)
+  "q": "...",
+  "default_behavior": "long_form_answer",
+  "intents": [ ... ],                // custom intent objects (see Intent Detection section)
+  "search": {                        // all optional overrides
+    "system_prompt": "...",
+    "answer_model": { ... },         // legacy "chat_model" string still accepted
     "chat_temperature": 0.1,
-    "system_prompt": "You are a helpful assistant...", // optional; worker provides a sensible default with URL restrictions
-    "initial_topK": 15,             // results fetched from Vectorize for re-ranking (default 15)
-    "final_topK": 3,                // results passed to behavior after re-ranking (default 3)
+    "initial_topK": 15, "final_topK": 3,
     "max_output_tokens": 1024,
-    // Performance/cost tunables
-    "max_context_docs": 6,           // max docs included in /ask prompt context
-    "max_kv_text_chars": 3000,       // truncate KV text per doc to this many chars
-    "answer_cache_ttl": 2592000,     // seconds for /ask answer cache (default: 30 days; cleared on ingest)
-    "embed_cache_ttl": 7776000,      // seconds for query embedding cache (default: 90 days)
-    "caching": true                  // default caching behavior (true/false); can be overridden per-request
-  }
+    "max_context_docs": 6, "max_kv_text_chars": 3000,
+    "caching": true, "embed_cache_ttl": 7776000, "answer_cache_ttl": 2592000
+  },
+  "caching": true,                   // or split: "cache_answer" / "cache_embedding"
+  "force_intent": "..."              // Training tab: skip intent detection
 }
 ```
-
-Notes:
-- The worker must load cfg by `?site=<site>` in the URL on protected endpoints.
-- For /ask specifically, the JSON body must also include `site` and `q`.
 
 
 ## CORS and authentication
-- CORS: The worker checks the request Origin against `search.allowed_origins` for the site. If not provided, it falls back to the env var `ALLOWED_ORIGINS`.
-- Auth: If `search.api_key` or top‑level `api_key` is set in the site config, protected endpoints require `x-api-key: <key>`.
-- Protected endpoints: all except `GET /status` require API key when configured.
+- Auth: every request must be signed with HMAC-SHA256 (`X-Worx-Timestamp`, `X-Worx-Signature`) over `METHOD\nPATH\nQUERY\nTIMESTAMP\nBODY` using `WORX_HMAC_SECRET` (5-minute skew window). See `src/lib/hmac.ts`. The `x-api-key` headers in older examples below are no longer how auth works; use `npm run call` (below) for hand-made requests.
+- CORS: Origin is checked against `ALLOWED_ORIGINS`.
 
 
 ## Intent Detection & Behavior System (v2.0)
@@ -292,8 +274,8 @@ Caching can be controlled at two levels with clear precedence:
 - Add `caching=1` to force caching ON for this request.
 - Add `caching=0` to force caching OFF for this request.
 
-2) Site config default (fallback)
-- Set `search.caching: true | false` in `cfg:<site>` to define the default behavior when the URL has no `caching` parameter.
+2) Site default (fallback)
+- Send `search.caching: true | false` in the request body to define the default behavior when the URL has no `caching` parameter.
 
 What is cached when ON:
 - Query embedding cache `qemb:*` is used for /search and /ask (TTL default 90 days; configurable via `search.embed_cache_ttl`).
@@ -420,7 +402,7 @@ On answer cache hit, `stats.cached = true` and token fields are null.
 
 
 ### 4) Admin: /admin/clear-cache (GET or POST)
-Clear caches under `ans:*` and/or `qemb:*` prefixes in CONFIG KV. Requires API key.
+Clear caches under `ans:*` and/or `qemb:*` prefixes in the CACHE KV. Requires a signed request.
 
 **Multi-tenant safe:** Only deletes cache keys with matching site metadata, preventing cross-site cache interference.
 
@@ -543,11 +525,11 @@ curl -s "https://<worker>/debug/query-by-id?site=<site>&id=page:311&k=3&doc=1" -
 Prereqs: Node 18+, Wrangler CLI, Cloudflare account with Vectorize, Workers AI, and KV bound.
 
 - Install deps: `npm i`
-- Local dev (remote bindings): `npm run dev`
+- Local dev: `npm run dev` — runs locally on :8787 with remote CONTENT, VECTORIZE and AI; CACHE is a local KV. Needs wrangler >= 4.161 (older versions fail with "Could not create remote preview session").
+- Local secret: put `WORX_HMAC_SECRET=<any random hex>` in `.dev.vars` (gitignored). It is local-only, not production's.
+- Signed requests: `npm run call -- GET /status` or `npm run call -- POST '/search?site=worxbranding-dev' '{"q":"..."}'` (set `WORX_URL` to target another worker).
 - Tail logs: `npm run monitor`
 - Deploy: `npm run deploy`
-
-Ensure your `wrangler.jsonc` has correct bindings and your KV contains the necessary `cfg:<site>` entries.
 
 
 ## Automatic Cache Invalidation
